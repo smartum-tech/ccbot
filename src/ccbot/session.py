@@ -811,8 +811,16 @@ class SessionManager:
 
     # --- Tmux helpers ---
 
-    async def send_to_window(self, window_id: str, text: str) -> tuple[bool, str]:
+    async def send_to_window(
+        self,
+        window_id: str,
+        text: str,
+        *,
+        author_name: str | None = None,
+    ) -> tuple[bool, str]:
         """Send text to a tmux window by ID."""
+        if config.show_author and author_name:
+            text = f"[{author_name}] {text}"
         display = self.get_display_name(window_id)
         logger.debug(
             "send_to_window: window_id=%s (%s), text_len=%d",

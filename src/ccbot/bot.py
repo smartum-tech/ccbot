@@ -522,7 +522,9 @@ async def forward_command_handler(
         "Forwarding command %s to window %s (user=%d)", cc_slash, display, user.id
     )
     await update.message.chat.send_action(ChatAction.TYPING)
-    success, message = await session_manager.send_to_window(wid, cc_slash)
+    success, message = await session_manager.send_to_window(
+        wid, cc_slash, author_name=user.first_name
+    )
     if success:
         await safe_reply(update.message, f"⚡ [{display}] Sent: {cc_slash}")
         # If /clear command was sent, clear the session association
@@ -623,7 +625,9 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.chat.send_action(ChatAction.TYPING)
     clear_status_msg_info(user.id, thread_id)
 
-    success, message = await session_manager.send_to_window(wid, text_to_send)
+    success, message = await session_manager.send_to_window(
+        wid, text_to_send, author_name=user.first_name
+    )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
         return
@@ -700,7 +704,9 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.chat.send_action(ChatAction.TYPING)
     clear_status_msg_info(user.id, thread_id)
 
-    success, message = await session_manager.send_to_window(wid, text)
+    success, message = await session_manager.send_to_window(
+        wid, text, author_name=user.first_name
+    )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
         return
@@ -968,7 +974,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # Small delay to let UI render in Telegram before text arrives
         await asyncio.sleep(0.3)
 
-    success, message = await session_manager.send_to_window(wid, text)
+    success, message = await session_manager.send_to_window(
+        wid, text, author_name=user.first_name
+    )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
         return
@@ -1099,6 +1107,7 @@ async def _create_and_bind_window(
                 send_ok, send_msg = await session_manager.send_to_window(
                     created_wid,
                     pending_text,
+                    author_name=user.first_name,
                 )
                 if not send_ok:
                     logger.warning("Failed to forward pending text: %s", send_msg)
@@ -1487,7 +1496,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             context.user_data.pop("_pending_thread_id", None)
         if pending_text:
             send_ok, send_msg = await session_manager.send_to_window(
-                selected_wid, pending_text
+                selected_wid, pending_text, author_name=user.first_name
             )
             if not send_ok:
                 logger.warning("Failed to forward pending text: %s", send_msg)
