@@ -10,6 +10,7 @@ Key class: Config (singleton instantiated as `config`).
 
 import logging
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -99,6 +100,9 @@ class Config:
             "OPENAI_BASE_URL", "https://api.openai.com/v1"
         )
 
+        # Custom commands from env vars
+        self.custom_commands, self.cc_skill_commands = self._parse_custom_commands()
+
         # Scrub sensitive vars from os.environ so child processes never inherit them.
         # Values are already captured in Config attributes above.
         for var in SENSITIVE_ENV_VARS:
@@ -113,6 +117,63 @@ class Config:
             self.tmux_session_name,
             self.claude_projects_path,
         )
+
+    # Built-in command names that cannot be overridden
+    BUILTIN_COMMANDS = {
+        "start",
+        "history",
+        "screenshot",
+        "esc",
+        "kill",
+        "unbind",
+        "usage",
+    }
+
+    # Valid Telegram command name: 1-32 lowercase alphanumeric + underscores
+    _CMD_NAME_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+
+    def _parse_custom_commands(
+        self,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Parse CUSTOM_CMD_* and CC_CMD_* from environment variables."""
+        custom_commands: dict[str, str] = {}
+        cc_skill_commands: dict[str, str] = {}
+
+        for key, value in os.environ.items():
+            if key.startswith("CUSTOM_CMD_") and value:
+                name = key[len("CUSTOM_CMD_") :].lower()
+                if not self._CMD_NAME_RE.match(name):
+                    logger.warning("Ignoring %s: invalid command name '%s'", key, name)
+                    continue
+                if name in self.BUILTIN_COMMANDS:
+                    logger.warning("Ignoring %s: conflicts with built-in command", key)
+                    continue
+                custom_commands[name] = value
+
+        for key, value in os.environ.items():
+            if key.startswith("CC_CMD_") and value:
+                name = key[len("CC_CMD_") :].lower()
+                if not self._CMD_NAME_RE.match(name):
+                    logger.warning("Ignoring %s: invalid command name '%s'", key, name)
+                    continue
+                if name in self.BUILTIN_COMMANDS:
+                    logger.warning("Ignoring %s: conflicts with built-in command", key)
+                    continue
+                if name in custom_commands:
+                    logger.warning(
+                        "Ignoring %s: conflicts with CUSTOM_CMD_%s",
+                        key,
+                        name.upper(),
+                    )
+                    continue
+                cc_skill_commands[name] = value
+
+        if custom_commands:
+            logger.info("Custom shell commands: %s", list(custom_commands.keys()))
+        if cc_skill_commands:
+            logger.info("CC skill commands: %s", list(cc_skill_commands.keys()))
+
+        return custom_commands, cc_skill_commands
 
     def is_user_allowed(self, user_id: int) -> bool:
         """Check if a user is in the allowed list."""

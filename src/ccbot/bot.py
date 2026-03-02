@@ -128,6 +128,7 @@ from .handlers.message_sender import (
 )
 from .markdown_v2 import convert_markdown
 from .handlers.response_builder import build_response_parts
+from .handlers.custom_commands import make_handler as make_custom_handler
 from .handlers.status_polling import status_poll_loop
 from .screenshot import text_to_image
 from .session import session_manager
@@ -1822,6 +1823,14 @@ async def post_init(application: Application) -> None:
     for cmd_name, desc in CC_COMMANDS.items():
         bot_commands.append(BotCommand(cmd_name, desc))
 
+    # Custom shell commands (CUSTOM_CMD_*)
+    for cmd_name, shell_cmd in config.custom_commands.items():
+        bot_commands.append(BotCommand(cmd_name, f"⚡ {shell_cmd[:45]}"))
+
+    # CC skill shortcuts (CC_CMD_*)
+    for cmd_name, description in config.cc_skill_commands.items():
+        bot_commands.append(BotCommand(cmd_name, f"↗ {description[:45]}"))
+
     await application.bot.set_my_commands(bot_commands)
 
     # Re-resolve stale window IDs from persisted state against live tmux windows
@@ -1907,7 +1916,12 @@ def create_bot() -> Application:
             topic_edited_handler,
         )
     )
-    # Forward any other /command to Claude Code
+    # Custom shell commands (CUSTOM_CMD_*) — before catch-all forward
+    for cmd_name, shell_cmd in config.custom_commands.items():
+        application.add_handler(
+            CommandHandler(cmd_name, make_custom_handler(cmd_name, shell_cmd))
+        )
+    # Forward any other /command to Claude Code (incl. CC_CMD_* skills)
     application.add_handler(MessageHandler(filters.COMMAND, forward_command_handler))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
