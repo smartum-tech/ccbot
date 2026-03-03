@@ -44,42 +44,50 @@ def _claude_settings_file(claude_config_dir: str | None = None) -> Path:
 # The hook command suffix for detection
 _HOOK_COMMAND_SUFFIX = "ccbot hook"
 
-# Marker for Docker inline hook detection
-_DOCKER_HOOK_MARKER = "CCBOT_DOCKER_HOOK"
+# Name of the hook script file written to ccbot config dir
+_DOCKER_HOOK_SCRIPT_NAME = "docker_hook.sh"
 
-# Inline shell script for Docker-based hook.
-# Runs inside the container where ccbot is not installed.
-# Reads JSON from stdin, extracts session info, updates session_map.json
-# via flock-based locking. Uses python3 for JSON manipulation.
-_DOCKER_HOOK_SCRIPT = (
-    "sh -c '"
-    "read -r input; "
-    'event=$(echo "$input" | grep -o \'"\\"hook_event_name\\":\\"[^\\"]*\\"\' | cut -d\\" -f4); '
-    '[ "$event" != "SessionStart" ] && exit 0; '
-    'sid=$(echo "$input" | grep -o \'"\\"session_id\\":\\"[^\\"]*\\"\' | cut -d\\" -f4); '
-    'cwd=$(echo "$input" | grep -o \'"\\"cwd\\":\\"[^\\"]*\\"\' | cut -d\\" -f4); '
-    '[ -z "$sid" ] || [ -z "$CCBOT_WINDOW_KEY" ] || [ -z "$CCBOT_MAP_FILE" ] && exit 0; '
-    'key=$(echo "$CCBOT_WINDOW_KEY" | cut -d: -f1-2); '
-    'wname=$(echo "$CCBOT_WINDOW_KEY" | cut -d: -f3-); '
-    'dir=$(dirname "$CCBOT_MAP_FILE"); '
-    'mkdir -p "$dir"; '
-    'lockfile="${CCBOT_MAP_FILE}.lock"; '
-    "( "
-    "flock 9; "
-    'if [ -f "$CCBOT_MAP_FILE" ]; then cur=$(cat "$CCBOT_MAP_FILE"); else cur="{}"; fi; '
-    'echo "$cur" | python3 -c "'
-    "import sys,json;"
-    "d=json.load(sys.stdin);"
-    'd[\\"\'"$key"\'\\"]={\\"session_id\\":\\"\'"$sid"\'\\",\\"cwd\\":\\"\'"$cwd"\'\\",\\"window_name\\":\\"\'"$wname"\'\\"};'
-    'json.dump(d,open(\\"\'"$CCBOT_MAP_FILE"\'\\",\\"w\\"),indent=2)'
-    '" '
-    ') 9>"$lockfile"'
-    "'"
-)
+# The hook script content. Uses node (guaranteed in Claude Code images)
+# for JSON parsing. Reads stdin, checks env vars, updates session_map.json.
+_DOCKER_HOOK_SCRIPT_CONTENT = """\
+#!/bin/sh
+# CCBOT Docker hook — updates session_map.json on SessionStart.
+# Env vars: CCBOT_WINDOW_KEY (session:@id:name), CCBOT_MAP_FILE (path).
+# Uses node for JSON (guaranteed in Claude Code images).
+
+[ -z "$CCBOT_WINDOW_KEY" ] || [ -z "$CCBOT_MAP_FILE" ] && exit 0
+
+node -e '
+const fs = require("fs");
+const path = require("path");
+
+let input = "";
+process.stdin.on("data", c => input += c);
+process.stdin.on("end", () => {
+  const payload = JSON.parse(input);
+  if (payload.hook_event_name !== "SessionStart") process.exit(0);
+  const sid = payload.session_id;
+  const cwd = payload.cwd || "";
+  if (!sid) process.exit(0);
+
+  const wk = process.env.CCBOT_WINDOW_KEY;
+  const mf = process.env.CCBOT_MAP_FILE;
+  const parts = wk.split(":");
+  const key = parts.slice(0, 2).join(":");
+  const wname = parts.slice(2).join(":");
+
+  fs.mkdirSync(path.dirname(mf), { recursive: true });
+  let data = {};
+  try { data = JSON.parse(fs.readFileSync(mf, "utf8")); } catch {}
+  data[key] = { session_id: sid, cwd: cwd, window_name: wname };
+  fs.writeFileSync(mf, JSON.stringify(data, null, 2) + "\\n");
+});
+'
+"""
 
 
 def _is_docker_hook_installed(settings: dict) -> bool:
-    """Check if the Docker inline hook is already installed."""
+    """Check if the Docker hook is already installed."""
     hooks = settings.get("hooks", {})
     session_start = hooks.get("SessionStart", [])
     for entry in session_start:
@@ -90,23 +98,39 @@ def _is_docker_hook_installed(settings: dict) -> bool:
             if not isinstance(h, dict):
                 continue
             cmd = h.get("command", "")
-            if _DOCKER_HOOK_MARKER in cmd:
+            if _DOCKER_HOOK_SCRIPT_NAME in cmd:
                 return True
     return False
 
 
 def _install_docker_hook(claude_config_dir: str | None = None) -> int:
-    """Install an inline Docker-compatible hook into Claude's settings.json.
+    """Install a Docker-compatible hook into Claude's settings.json.
 
-    The hook is a self-contained shell script that runs inside the container,
-    reading session info from stdin and updating session_map.json via env vars.
+    Writes a standalone script (docker_hook.sh) to the ccbot config dir and
+    registers a short command in settings.json that invokes it via the
+    CCBOT_MAP_FILE env var path. The script uses node for JSON manipulation.
 
     Returns 0 on success, 1 on error.
     """
+    from .utils import ccbot_dir
+
+    # Write the hook script to ccbot config dir
+    script_path = ccbot_dir() / _DOCKER_HOOK_SCRIPT_NAME
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        script_path.write_text(_DOCKER_HOOK_SCRIPT_CONTENT)
+        script_path.chmod(0o755)
+    except OSError as e:
+        logger.error("Error writing %s: %s", script_path, e)
+        print(f"Error writing {script_path}: {e}", file=sys.stderr)
+        return 1
+    logger.info("Wrote hook script to %s", script_path)
+    print(f"Wrote hook script to {script_path}")
+
+    # Install the settings.json entry
     settings_file = _claude_settings_file(claude_config_dir)
     settings_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Read existing settings
     settings: dict = {}
     if settings_file.exists():
         try:
@@ -116,18 +140,18 @@ def _install_docker_hook(claude_config_dir: str | None = None) -> int:
             print(f"Error reading {settings_file}: {e}", file=sys.stderr)
             return 1
 
-    # Check if already installed
     if _is_docker_hook_installed(settings):
         logger.info("Docker hook already installed in %s", settings_file)
         print(f"Docker hook already installed in {settings_file}")
         return 0
 
-    # Build the hook command with a marker comment for detection
-    hook_command = f"# {_DOCKER_HOOK_MARKER}\n{_DOCKER_HOOK_SCRIPT}"
+    # The command derives the script path from CCBOT_MAP_FILE at runtime.
+    # CCBOT_MAP_FILE is set via Docker -e flag, so dirname gives the ccbot dir
+    # where docker_hook.sh lives (mounted from the host).
+    hook_command = f'"$(dirname "$CCBOT_MAP_FILE")/{_DOCKER_HOOK_SCRIPT_NAME}"'
     hook_config = {"type": "command", "command": hook_command, "timeout": 10}
     logger.info("Installing Docker hook into %s", settings_file)
 
-    # Install the hook
     if "hooks" not in settings:
         settings["hooks"] = {}
     if "SessionStart" not in settings["hooks"]:
@@ -135,7 +159,6 @@ def _install_docker_hook(claude_config_dir: str | None = None) -> int:
 
     settings["hooks"]["SessionStart"].append({"hooks": [hook_config]})
 
-    # Write back
     try:
         settings_file.write_text(
             json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
