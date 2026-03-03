@@ -419,6 +419,11 @@ class TmuxManager:
                     pane = window.active_pane
                     if pane:
                         cmd = config.claude_command
+                        # Substitute placeholders for Docker-based setups
+                        window_key = f"{self.session_name}:{wid}:{final_window_name}"
+                        map_file = str(config.session_map_file)
+                        cmd = cmd.replace("{CCBOT_WINDOW_KEY}", window_key)
+                        cmd = cmd.replace("{CCBOT_MAP_FILE}", map_file)
                         if resume_session_id:
                             cmd = f"{cmd} --resume {resume_session_id}"
                         pane.send_keys(cmd, enter=True)
