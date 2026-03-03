@@ -104,6 +104,16 @@ class SessionMonitor:
     async def scan_projects(self) -> list[SessionInfo]:
         """Scan projects that have active tmux windows."""
         active_cwds = await self._get_active_cwds()
+
+        # Include cwds from session_map (window_states). These may differ from
+        # tmux window cwds when Claude Code runs inside Docker (container path
+        # vs host path).
+        from .session import session_manager
+
+        for state in session_manager.window_states.values():
+            if state.cwd:
+                active_cwds.add(state.cwd)
+
         if not active_cwds:
             return []
 
