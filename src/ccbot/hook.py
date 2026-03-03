@@ -2,7 +2,7 @@
 
 Called by Claude Code's SessionStart hook to maintain a window↔session
 mapping in <CCBOT_DIR>/session_map.json. Also provides `--install` to
-auto-configure the hook in ~/.claude/settings.json.
+auto-configure the hook in Claude's settings.json.
 
 This module must NOT import config.py (which requires TELEGRAM_BOT_TOKEN),
 since hooks run inside tmux panes where bot env vars are not set.
@@ -27,7 +27,19 @@ logger = logging.getLogger(__name__)
 # Validate session_id looks like a UUID
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
-_CLAUDE_SETTINGS_FILE = Path.home() / ".claude" / "settings.json"
+
+def _claude_settings_file(claude_config_dir: str | None = None) -> Path:
+    """Resolve Claude settings.json path.
+
+    Priority: --claude-config-dir arg > CLAUDE_CONFIG_DIR env > ~/.claude
+    """
+    if claude_config_dir:
+        return Path(claude_config_dir) / "settings.json"
+    env_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir) / "settings.json"
+    return Path.home() / ".claude" / "settings.json"
+
 
 # The hook command suffix for detection
 _HOOK_COMMAND_SUFFIX = "ccbot hook"
@@ -78,12 +90,12 @@ def _is_hook_installed(settings: dict) -> bool:
     return False
 
 
-def _install_hook() -> int:
+def _install_hook(claude_config_dir: str | None = None) -> int:
     """Install the ccbot hook into Claude's settings.json.
 
     Returns 0 on success, 1 on error.
     """
-    settings_file = _CLAUDE_SETTINGS_FILE
+    settings_file = _claude_settings_file(claude_config_dir)
     settings_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Read existing settings
@@ -147,14 +159,18 @@ def hook_main() -> None:
     parser.add_argument(
         "--install",
         action="store_true",
-        help="Install the hook into ~/.claude/settings.json",
+        help="Install the hook into Claude's settings.json",
+    )
+    parser.add_argument(
+        "--claude-config-dir",
+        help="Path to Claude config directory (default: $CLAUDE_CONFIG_DIR or ~/.claude)",
     )
     # Parse only known args to avoid conflicts with stdin JSON
     args, _ = parser.parse_known_args(sys.argv[2:])
 
     if args.install:
         logger.info("Hook install requested")
-        sys.exit(_install_hook())
+        sys.exit(_install_hook(args.claude_config_dir))
 
     # Normal hook processing: read JSON from stdin
     logger.debug("Processing hook event from stdin")
