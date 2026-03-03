@@ -58,6 +58,10 @@ class Config:
                 "Expected comma-separated Telegram user IDs."
             ) from e
 
+        # Restrict bot to a single Telegram chat (optional)
+        chat_id_str = os.getenv("CHAT_ID", "").strip()
+        self.chat_id: int | None = int(chat_id_str) if chat_id_str else None
+
         # Tmux session name and window naming
         self.tmux_session_name = os.getenv("TMUX_SESSION_NAME", "ccbot")
         self.tmux_main_window_name = "__main__"

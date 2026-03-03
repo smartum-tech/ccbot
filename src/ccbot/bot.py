@@ -158,8 +158,16 @@ CC_COMMANDS: dict[str, str] = {
 }
 
 
-def is_user_allowed(user_id: int | None) -> bool:
-    return user_id is not None and config.is_user_allowed(user_id)
+def is_allowed(update: Update) -> bool:
+    """Check if the update is from an allowed user and (optionally) allowed chat."""
+    user = update.effective_user
+    if not user or not config.is_user_allowed(user.id):
+        return False
+    if config.chat_id is not None:
+        chat = update.effective_chat
+        if not chat or chat.id != config.chat_id:
+            return False
+    return True
 
 
 def _get_thread_id(update: Update) -> int | None:
@@ -179,8 +187,7 @@ def _get_thread_id(update: Update) -> int | None:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         if update.message:
             await safe_reply(update.message, "You are not authorized to use this bot.")
         return
@@ -198,8 +205,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show message history for the active session or bound thread."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
     if not update.message:
         return
 
@@ -217,8 +225,9 @@ async def screenshot_command(
 ) -> None:
     """Capture the current tmux pane and send it as an image."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
     if not update.message:
         return
 
@@ -251,8 +260,9 @@ async def screenshot_command(
 async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Unbind this topic from its Claude session without killing the window."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
     if not update.message:
         return
 
@@ -281,8 +291,9 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send Escape key to interrupt Claude."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
     if not update.message:
         return
 
@@ -306,8 +317,9 @@ async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Fetch Claude Code usage stats from TUI and send to Telegram."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
     if not update.message:
         return
 
@@ -408,8 +420,9 @@ async def topic_closed_handler(
 ) -> None:
     """Handle topic closure — kill the associated tmux window and clean up state."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
 
     thread_id = _get_thread_id(update)
     if thread_id is None:
@@ -448,8 +461,9 @@ async def topic_edited_handler(
 ) -> None:
     """Handle topic rename — sync new name to tmux window and internal state."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
 
     msg = update.message
     if not msg or not msg.forum_topic_edited:
@@ -489,8 +503,9 @@ async def forward_command_handler(
 ) -> None:
     """Forward any non-bot command as a slash command to the active Claude Code session."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
     if not update.message:
         return
 
@@ -549,8 +564,9 @@ async def unsupported_content_handler(
     if not update.message:
         return
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         return
+    assert user is not None
     logger.debug("Unsupported content from user %d", user.id)
     await safe_reply(
         update.message,
@@ -566,10 +582,11 @@ _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle photos sent by the user: download and forward path to Claude Code."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         if update.message:
             await safe_reply(update.message, "You are not authorized to use this bot.")
         return
+    assert user is not None
 
     if not update.message or not update.message.photo:
         return
@@ -639,10 +656,11 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle voice messages: transcribe via OpenAI and forward text to Claude Code."""
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         if update.message:
             await safe_reply(update.message, "You are not authorized to use this bot.")
         return
+    assert user is not None
 
     if not update.message or not update.message.voice:
         return
@@ -808,10 +826,11 @@ async def _capture_bash_output(
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         if update.message:
             await safe_reply(update.message, "You are not authorized to use this bot.")
         return
+    assert user is not None
 
     if not update.message or not update.message.text:
         return
@@ -1139,9 +1158,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     user = update.effective_user
-    if not user or not is_user_allowed(user.id):
+    if not is_allowed(update):
         await query.answer("Not authorized")
         return
+    assert user is not None
 
     data = query.data
 
