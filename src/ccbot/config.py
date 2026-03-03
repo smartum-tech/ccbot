@@ -101,6 +101,11 @@ class Config:
         # Prefix messages to Claude Code with sender's Telegram name
         self.show_author = os.getenv("CCBOT_SHOW_AUTHOR", "").lower() == "true"
 
+        # Container path for ccbot_dir (Docker setups where Claude Code
+        # sees a different mount point than the host, e.g. /root/.ccbot)
+        container_dir = os.getenv("CCBOT_CONTAINER_DIR", "").strip()
+        self.container_dir: Path | None = Path(container_dir) if container_dir else None
+
         # OpenAI API for voice message transcription (optional)
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         self.openai_base_url: str = os.getenv(
@@ -198,6 +203,21 @@ class Config:
             logger.info("CC skill commands: %s", list(cc_skill_commands.keys()))
 
         return custom_commands, cc_skill_commands
+
+    def container_path(self, host_path: Path) -> Path:
+        """Translate a host path under config_dir to the container mount point.
+
+        When CCBOT_CONTAINER_DIR is set, replaces the config_dir prefix with the
+        container directory so Claude Code inside Docker sees the correct path.
+        Returns the original path unchanged when not in a Docker setup.
+        """
+        if self.container_dir is None:
+            return host_path
+        try:
+            rel = host_path.relative_to(self.config_dir)
+        except ValueError:
+            return host_path
+        return self.container_dir / rel
 
     def is_user_allowed(self, user_id: int) -> bool:
         """Check if a user is in the allowed list."""

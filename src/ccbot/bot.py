@@ -644,11 +644,13 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await tg_file.download_to_drive(file_path)
 
     # Build the message to send to Claude Code
+    # Use container path when Claude Code runs inside Docker
+    visible_path = config.container_path(file_path)
     caption = update.message.caption or ""
     if caption:
-        text_to_send = f"{caption}\n\n(image attached: {file_path})"
+        text_to_send = f"{caption}\n\n(image attached: {visible_path})"
     else:
-        text_to_send = f"(image attached: {file_path})"
+        text_to_send = f"(image attached: {visible_path})"
 
     await update.message.chat.send_action(ChatAction.TYPING)
     clear_status_msg_info(user.id, thread_id)
@@ -719,11 +721,13 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await tg_file.download_to_drive(file_path)
 
     # Build the message to send to Claude Code
+    # Use container path when Claude Code runs inside Docker
+    visible_path = config.container_path(file_path)
     caption = update.message.caption or ""
     if caption:
-        text_to_send = f"{caption}\n\n(file attached: {file_path})"
+        text_to_send = f"{caption}\n\n(file attached: {visible_path})"
     else:
-        text_to_send = f"(file attached: {file_path})"
+        text_to_send = f"(file attached: {visible_path})"
 
     await update.message.chat.send_action(ChatAction.TYPING)
     clear_status_msg_info(user.id, thread_id)
