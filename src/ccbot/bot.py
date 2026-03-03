@@ -521,6 +521,13 @@ async def forward_command_handler(
     cmd_text = update.message.text or ""
     # The full text is already a slash command like "/clear" or "/compact foo"
     cc_slash = cmd_text.split("@")[0]  # strip bot mention
+    # Restore original hyphenated name for CC_CMD commands
+    # e.g. /review_compliance → /review-compliance
+    parts = cc_slash.split(None, 1)  # ["/cmd", "args..."]
+    tg_cmd = parts[0].lstrip("/")
+    original = config.cc_cmd_original_names.get(tg_cmd)
+    if original:
+        cc_slash = "/" + original + ((" " + parts[1]) if len(parts) > 1 else "")
     wid = session_manager.resolve_window_for_thread(user.id, thread_id)
     if not wid:
         await safe_reply(update.message, "❌ No session bound to this topic.")

@@ -108,6 +108,8 @@ class Config:
         )
 
         # Custom commands from env vars
+        # Maps Telegram command name → original CC command name (for hyphenated names)
+        self.cc_cmd_original_names: dict[str, str] = {}
         self.custom_commands, self.cc_skill_commands = self._parse_custom_commands()
 
         # Scrub sensitive vars from os.environ so child processes never inherit them.
@@ -138,11 +140,19 @@ class Config:
 
     # Valid Telegram command name: 1-32 lowercase alphanumeric + underscores
     _CMD_NAME_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+    # CC_CMD names may contain hyphens (mapped to underscores for Telegram)
+    _CC_CMD_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
     def _parse_custom_commands(
         self,
     ) -> tuple[dict[str, str], dict[str, str]]:
-        """Parse CUSTOM_CMD_* and CC_CMD_* from environment variables."""
+        """Parse CUSTOM_CMD_* and CC_CMD_* from environment variables.
+
+        CC_CMD names may contain hyphens (e.g. CC_CMD_REVIEW-COMPLIANCE).
+        Hyphens are converted to underscores for Telegram command registration,
+        but the original name is preserved in cc_cmd_original_names for forwarding
+        to Claude Code.
+        """
         custom_commands: dict[str, str] = {}
         cc_skill_commands: dict[str, str] = {}
 
@@ -159,21 +169,28 @@ class Config:
 
         for key, value in os.environ.items():
             if key.startswith("CC_CMD_") and value:
-                name = key[len("CC_CMD_") :].lower()
-                if not self._CMD_NAME_RE.match(name):
-                    logger.warning("Ignoring %s: invalid command name '%s'", key, name)
+                original_name = key[len("CC_CMD_") :].lower()
+                if not self._CC_CMD_NAME_RE.match(original_name):
+                    logger.warning(
+                        "Ignoring %s: invalid command name '%s'", key, original_name
+                    )
                     continue
-                if name in self.BUILTIN_COMMANDS:
+                # Telegram commands use underscores; hyphens become underscores
+                tg_name = original_name.replace("-", "_")
+                if tg_name in self.BUILTIN_COMMANDS:
                     logger.warning("Ignoring %s: conflicts with built-in command", key)
                     continue
-                if name in custom_commands:
+                if tg_name in custom_commands:
                     logger.warning(
                         "Ignoring %s: conflicts with CUSTOM_CMD_%s",
                         key,
-                        name.upper(),
+                        tg_name.upper(),
                     )
                     continue
-                cc_skill_commands[name] = value
+                cc_skill_commands[tg_name] = value
+                # Remember original name for forwarding to Claude Code
+                if original_name != tg_name:
+                    self.cc_cmd_original_names[tg_name] = original_name
 
         if custom_commands:
             logger.info("Custom shell commands: %s", list(custom_commands.keys()))
