@@ -103,7 +103,10 @@ def _is_docker_hook_installed(settings: dict) -> bool:
     return False
 
 
-def _install_docker_hook(claude_config_dir: str | None = None) -> int:
+def _install_docker_hook(
+    claude_config_dir: str | None = None,
+    ccbot_dir_override: str | None = None,
+) -> int:
     """Install a Docker-compatible hook into Claude's settings.json.
 
     Writes a standalone script (docker_hook.sh) to the ccbot config dir and
@@ -115,7 +118,8 @@ def _install_docker_hook(claude_config_dir: str | None = None) -> int:
     from .utils import ccbot_dir
 
     # Write the hook script to ccbot config dir
-    script_path = ccbot_dir() / _DOCKER_HOOK_SCRIPT_NAME
+    state_dir = Path(ccbot_dir_override) if ccbot_dir_override else ccbot_dir()
+    script_path = state_dir / _DOCKER_HOOK_SCRIPT_NAME
     script_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         script_path.write_text(_DOCKER_HOOK_SCRIPT_CONTENT)
@@ -298,6 +302,11 @@ def hook_main() -> None:
         "--claude-config-dir",
         help="Path to Claude config directory (default: $CLAUDE_CONFIG_DIR or ~/.claude)",
     )
+    parser.add_argument(
+        "--ccbot-dir",
+        help="Path to ccbot state directory where docker_hook.sh will be written "
+        "(default: $CCBOT_DIR or ~/.ccbot)",
+    )
     # Parse only known args to avoid conflicts with stdin JSON
     args, _ = parser.parse_known_args(sys.argv[2:])
 
@@ -307,7 +316,7 @@ def hook_main() -> None:
 
     if args.install_docker:
         logger.info("Docker hook install requested")
-        sys.exit(_install_docker_hook(args.claude_config_dir))
+        sys.exit(_install_docker_hook(args.claude_config_dir, args.ccbot_dir))
 
     # Normal hook processing: read JSON from stdin
     logger.debug("Processing hook event from stdin")
