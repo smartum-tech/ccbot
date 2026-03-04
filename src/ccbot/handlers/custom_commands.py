@@ -60,7 +60,7 @@ async def _execute_custom_command(
     # Determine working directory from live tmux pane (host path).
     # session_map.json stores the container path which may differ in Docker setups.
     cwd = Path.home()
-    wid = session_manager.resolve_window_for_thread(user.id, thread_id)
+    wid = session_manager.resolve_window_for_thread(thread_id)
     if wid:
         w = await tmux_manager.find_window_by_id(wid)
         if w and w.cwd:

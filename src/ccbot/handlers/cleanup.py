@@ -16,7 +16,7 @@ from .message_queue import clear_status_msg_info, clear_tool_msg_ids_for_topic
 
 
 async def clear_topic_state(
-    user_id: int,
+    chat_id: int,
     thread_id: int,
     bot: Bot | None = None,
     user_data: dict[str, Any] | None = None,
@@ -34,13 +34,13 @@ async def clear_topic_state(
       - user_data pending state (_pending_thread_id, _pending_thread_text)
     """
     # Clear status message tracking
-    clear_status_msg_info(user_id, thread_id)
+    clear_status_msg_info(chat_id, thread_id)
 
     # Clear tool message ID tracking
-    clear_tool_msg_ids_for_topic(user_id, thread_id)
+    clear_tool_msg_ids_for_topic(chat_id, thread_id)
 
     # Clear interactive UI state (also deletes message from chat)
-    await clear_interactive_msg(user_id, bot, thread_id)
+    await clear_interactive_msg(chat_id, bot, thread_id)
 
     # Clear pending thread state from user_data
     if user_data is not None:
