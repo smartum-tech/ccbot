@@ -82,19 +82,20 @@ async def send_restart_browser(
     msg_text, keyboard, dirs = build_directory_browser(default_path)
     full_text = f"{notification}\n\n{msg_text}"
 
-    await safe_send(
-        bot, chat_id, full_text, message_thread_id=thread_id, reply_markup=keyboard
-    )
-
-    # Set browsing state so callback handlers work
-    # user_data is dict at runtime; Mapping type annotation is overly strict
-    all_user_data: dict = application.user_data  # type: ignore[assignment]
-    user_data = all_user_data.setdefault(user_id, {})
+    # Set browsing state BEFORE sending — ensures callback handlers have
+    # the state ready even if send takes time or triggers a callback race.
+    # application.user_data is MappingProxyType wrapping defaultdict(dict);
+    # __getitem__ triggers auto-creation via defaultdict.__missing__.
+    user_data = application.user_data[user_id]  # type: ignore[index]
     user_data[STATE_KEY] = STATE_BROWSING_DIRECTORY
     user_data[BROWSE_PATH_KEY] = default_path
     user_data[BROWSE_PAGE_KEY] = 0
     user_data[BROWSE_DIRS_KEY] = dirs
     user_data["_pending_thread_id"] = thread_id
+
+    await safe_send(
+        bot, chat_id, full_text, message_thread_id=thread_id, reply_markup=keyboard
+    )
 
 
 async def update_status_message(
