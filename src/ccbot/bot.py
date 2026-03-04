@@ -351,9 +351,10 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     display = session_manager.get_display_name(wid)
-    last_cwd = session_manager.get_window_cwd(wid)
     w = await tmux_manager.find_window_by_id(wid)
     if w:
+        # Get cwd from live tmux pane (most reliable), fallback to session_map
+        last_cwd = w.cwd or session_manager.get_window_cwd(wid)
         await tmux_manager.kill_window(w.window_id)
         logger.info(
             "Restart command: killed window %s (user=%d, thread=%d)",
@@ -362,6 +363,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             thread_id,
         )
     else:
+        last_cwd = session_manager.get_window_cwd(wid)
         logger.info(
             "Restart command: window %s already gone (user=%d, thread=%d)",
             display,

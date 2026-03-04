@@ -60,6 +60,7 @@ TOPIC_CHECK_INTERVAL = 60.0  # seconds
 DEAD_PROCESS_THRESHOLD = 3  # consecutive polls (~3s) before triggering
 SHELL_COMMANDS = {"bash", "zsh", "sh", "fish", "dash"}
 _dead_process_counts: dict[str, int] = {}  # window_id → consecutive dead count
+_seen_alive: set[str] = set()  # window_ids where Claude was seen running
 
 
 async def send_restart_browser(
@@ -225,6 +226,7 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                     w = await tmux_manager.find_window_by_id(wid)
                     if not w:
                         _dead_process_counts.pop(wid, None)
+                        _seen_alive.discard(wid)
                         session_manager.unbind_thread(user_id, thread_id)
                         await clear_topic_state(user_id, thread_id, bot)
                         logger.info(
@@ -236,32 +238,40 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                         continue
 
                     # Dead process detection: shell as foreground = Claude exited
+                    # Only trigger for windows where Claude was seen running at
+                    # least once (avoids false positives during window creation).
                     cmd = w.pane_current_command
                     if cmd and cmd in SHELL_COMMANDS:
-                        _dead_process_counts[wid] = _dead_process_counts.get(wid, 0) + 1
-                        if _dead_process_counts[wid] >= DEAD_PROCESS_THRESHOLD:
-                            logger.info(
-                                "Dead process detected: window=%s cmd=%s "
-                                "(user=%d, thread=%d)",
-                                wid,
-                                cmd,
-                                user_id,
-                                thread_id,
+                        if wid in _seen_alive:
+                            _dead_process_counts[wid] = (
+                                _dead_process_counts.get(wid, 0) + 1
                             )
-                            last_cwd = session_manager.get_window_cwd(wid)
-                            await tmux_manager.kill_window(w.window_id)
-                            session_manager.unbind_thread(user_id, thread_id)
-                            await clear_topic_state(user_id, thread_id, bot)
-                            await send_restart_browser(
-                                bot,
-                                application,
-                                user_id,
-                                thread_id,
-                                last_cwd=last_cwd,
-                            )
-                            _dead_process_counts.pop(wid, None)
-                            continue
+                            if _dead_process_counts[wid] >= DEAD_PROCESS_THRESHOLD:
+                                logger.info(
+                                    "Dead process detected: window=%s cmd=%s "
+                                    "(user=%d, thread=%d)",
+                                    wid,
+                                    cmd,
+                                    user_id,
+                                    thread_id,
+                                )
+                                last_cwd = w.cwd or session_manager.get_window_cwd(wid)
+                                await tmux_manager.kill_window(w.window_id)
+                                session_manager.unbind_thread(user_id, thread_id)
+                                await clear_topic_state(user_id, thread_id, bot)
+                                _seen_alive.discard(wid)
+                                await send_restart_browser(
+                                    bot,
+                                    application,
+                                    user_id,
+                                    thread_id,
+                                    last_cwd=last_cwd,
+                                )
+                                _dead_process_counts.pop(wid, None)
+                                continue
                     else:
+                        # Non-shell command running → Claude is alive
+                        _seen_alive.add(wid)
                         _dead_process_counts.pop(wid, None)
 
                     # UI detection happens unconditionally in update_status_message.
