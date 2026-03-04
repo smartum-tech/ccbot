@@ -68,13 +68,16 @@ async def send_restart_browser(
     user_id: int,
     thread_id: int,
     notification: str = "⚠️ Claude Code process has exited.\nSelect a directory to start a new session.",
+    last_cwd: str | None = None,
 ) -> None:
     """Send directory browser to a topic after process death or /restart.
 
     Sets user_data state so the directory browser callback handlers work correctly.
+    Uses last_cwd (the session's working directory) if available, otherwise falls
+    back to the bot's cwd.
     """
     chat_id = session_manager.resolve_chat_id(user_id, thread_id)
-    default_path = str(Path.cwd())
+    default_path = last_cwd if last_cwd and Path(last_cwd).is_dir() else str(Path.cwd())
     msg_text, keyboard, dirs = build_directory_browser(default_path)
     full_text = f"{notification}\n\n{msg_text}"
 
@@ -245,11 +248,16 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                                 user_id,
                                 thread_id,
                             )
+                            last_cwd = session_manager.get_window_state(wid).cwd
                             await tmux_manager.kill_window(w.window_id)
                             session_manager.unbind_thread(user_id, thread_id)
                             await clear_topic_state(user_id, thread_id, bot)
                             await send_restart_browser(
-                                bot, application, user_id, thread_id
+                                bot,
+                                application,
+                                user_id,
+                                thread_id,
+                                last_cwd=last_cwd,
                             )
                             _dead_process_counts.pop(wid, None)
                             continue

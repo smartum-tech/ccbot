@@ -351,6 +351,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     display = session_manager.get_display_name(wid)
+    last_cwd = session_manager.get_window_state(wid).cwd
     w = await tmux_manager.find_window_by_id(wid)
     if w:
         await tmux_manager.kill_window(w.window_id)
@@ -377,6 +378,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user.id,
         thread_id,
         notification="🔄 Session killed. Select a directory to start a new session.",
+        last_cwd=last_cwd,
     )
 
 
