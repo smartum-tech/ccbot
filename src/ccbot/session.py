@@ -566,6 +566,31 @@ class SessionManager:
             self.window_states[window_id] = WindowState()
         return self.window_states[window_id]
 
+    def get_window_cwd(self, window_id: str) -> str:
+        """Get the cwd for a window, reading from session_map.json as fallback.
+
+        The in-memory window_states may not have cwd if the entry was cleaned up.
+        Falls back to reading session_map.json directly.
+        """
+        # Try in-memory state first
+        state = self.window_states.get(window_id)
+        if state and state.cwd:
+            return state.cwd
+
+        # Fallback: read from session_map.json
+        try:
+            if config.session_map_file.exists():
+                with open(config.session_map_file) as f:
+                    session_map = json.loads(f.read())
+                key = f"{config.tmux_session_name}:{window_id}"
+                info = session_map.get(key, {})
+                cwd = info.get("cwd", "")
+                if cwd:
+                    return cwd
+        except (json.JSONDecodeError, OSError):
+            pass
+        return ""
+
     def clear_window_session(self, window_id: str) -> None:
         """Clear session association for a window (e.g., after /clear command)."""
         state = self.get_window_state(window_id)

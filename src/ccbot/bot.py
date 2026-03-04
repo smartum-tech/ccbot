@@ -351,7 +351,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     display = session_manager.get_display_name(wid)
-    last_cwd = session_manager.get_window_state(wid).cwd
+    last_cwd = session_manager.get_window_cwd(wid)
     w = await tmux_manager.find_window_by_id(wid)
     if w:
         await tmux_manager.kill_window(w.window_id)

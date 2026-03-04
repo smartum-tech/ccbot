@@ -248,7 +248,7 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                                 user_id,
                                 thread_id,
                             )
-                            last_cwd = session_manager.get_window_state(wid).cwd
+                            last_cwd = session_manager.get_window_cwd(wid)
                             await tmux_manager.kill_window(w.window_id)
                             session_manager.unbind_thread(user_id, thread_id)
                             await clear_topic_state(user_id, thread_id, bot)
