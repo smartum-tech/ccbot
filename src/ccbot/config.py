@@ -98,6 +98,12 @@ class Config:
             os.getenv("CCBOT_SHOW_HIDDEN_DIRS", "").lower() == "true"
         )
 
+        # Restrict directory browser to a root directory (optional)
+        root_dir_str = os.getenv("CCBOT_ROOT_DIR", "").strip()
+        self.root_dir: Path | None = (
+            Path(root_dir_str).resolve() if root_dir_str else None
+        )
+
         # Prefix messages to Claude Code with sender's Telegram name
         self.show_author = os.getenv("CCBOT_SHOW_AUTHOR", "").lower() == "true"
 

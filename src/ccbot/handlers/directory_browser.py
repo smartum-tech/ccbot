@@ -128,7 +128,14 @@ def build_directory_browser(
     """
     path = Path(current_path).expanduser().resolve()
     if not path.exists() or not path.is_dir():
-        path = Path.cwd()
+        path = config.root_dir if config.root_dir else Path.cwd()
+
+    # Clamp to root_dir if configured
+    if config.root_dir:
+        try:
+            path.relative_to(config.root_dir)
+        except ValueError:
+            path = config.root_dir
 
     try:
         subdirs = sorted(
@@ -177,8 +184,9 @@ def build_directory_browser(
         buttons.append(nav)
 
     action_row: list[InlineKeyboardButton] = []
-    # Allow going up unless at filesystem root
-    if path != path.parent:
+    # Allow going up unless at filesystem root (or root_dir boundary)
+    at_root = path == config.root_dir if config.root_dir else path == path.parent
+    if not at_root:
         action_row.append(InlineKeyboardButton("..", callback_data=CB_DIR_UP))
     action_row.append(InlineKeyboardButton("Select", callback_data=CB_DIR_CONFIRM))
     action_row.append(InlineKeyboardButton("Cancel", callback_data=CB_DIR_CANCEL))

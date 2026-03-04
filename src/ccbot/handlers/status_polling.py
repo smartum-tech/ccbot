@@ -28,6 +28,7 @@ from telegram import Bot
 from telegram.error import BadRequest
 from telegram.ext import Application
 
+from ..config import config
 from ..session import session_manager
 from ..terminal_parser import is_interactive_ui, parse_status_line
 from ..tmux_manager import tmux_manager
@@ -78,7 +79,8 @@ async def send_restart_browser(
     back to the bot's cwd.
     """
     chat_id = session_manager.resolve_chat_id(user_id, thread_id)
-    default_path = last_cwd if last_cwd and Path(last_cwd).is_dir() else str(Path.cwd())
+    fallback = config.root_dir if config.root_dir else Path.cwd()
+    default_path = last_cwd if last_cwd and Path(last_cwd).is_dir() else str(fallback)
     msg_text, keyboard, dirs = build_directory_browser(default_path)
     full_text = f"{notification}\n\n{msg_text}"
 
