@@ -19,6 +19,7 @@ from telegram.ext import ContextTypes
 
 from ..config import config
 from ..session import session_manager
+from ..tmux_manager import tmux_manager
 from .message_sender import safe_reply
 
 logger = logging.getLogger(__name__)
@@ -56,13 +57,14 @@ async def _execute_custom_command(
 
     thread_id = _get_thread_id(update)
 
-    # Determine working directory from bound session
+    # Determine working directory from live tmux pane (host path).
+    # session_map.json stores the container path which may differ in Docker setups.
     cwd = Path.home()
     wid = session_manager.resolve_window_for_thread(user.id, thread_id)
     if wid:
-        ws = session_manager.get_window_state(wid)
-        if ws.cwd:
-            cwd = Path(ws.cwd)
+        w = await tmux_manager.find_window_by_id(wid)
+        if w and w.cwd:
+            cwd = Path(w.cwd)
 
     await update.message.chat.send_action(ChatAction.TYPING)
 
