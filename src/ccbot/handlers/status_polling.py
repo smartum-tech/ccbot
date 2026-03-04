@@ -3,6 +3,7 @@
 Provides background polling of terminal status lines for all active users:
   - Detects Claude Code status (working, waiting, etc.)
   - Detects interactive UIs (permission prompts) not triggered via JSONL
+  - Detects dead Claude Code processes (OOM/crash/exit) via pane_current_command
   - Updates status messages in Telegram
   - Polls thread_bindings (each topic = one window)
   - Periodically probes topic existence via unpin_all_forum_topic_messages
@@ -12,27 +13,40 @@ Provides background polling of terminal status lines for all active users:
 Key components:
   - STATUS_POLL_INTERVAL: Polling frequency (1 second)
   - TOPIC_CHECK_INTERVAL: Topic existence probe frequency (60 seconds)
+  - DEAD_PROCESS_THRESHOLD: Consecutive polls before dead process triggers (3)
   - status_poll_loop: Background polling task
   - update_status_message: Poll and enqueue status updates
+  - send_restart_browser: Send directory browser after process death/restart
 """
 
 import asyncio
 import logging
 import time
+from pathlib import Path
 
 from telegram import Bot
 from telegram.error import BadRequest
+from telegram.ext import Application
 
 from ..session import session_manager
 from ..terminal_parser import is_interactive_ui, parse_status_line
 from ..tmux_manager import tmux_manager
+from .cleanup import clear_topic_state
+from .directory_browser import (
+    BROWSE_DIRS_KEY,
+    BROWSE_PAGE_KEY,
+    BROWSE_PATH_KEY,
+    STATE_BROWSING_DIRECTORY,
+    STATE_KEY,
+    build_directory_browser,
+)
 from .interactive_ui import (
     clear_interactive_msg,
     get_interactive_window,
     handle_interactive_ui,
 )
-from .cleanup import clear_topic_state
 from .message_queue import enqueue_status_update, get_message_queue
+from .message_sender import safe_send
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +55,42 @@ STATUS_POLL_INTERVAL = 1.0  # seconds - faster response (rate limiting at send l
 
 # Topic existence probe interval
 TOPIC_CHECK_INTERVAL = 60.0  # seconds
+
+# Dead process detection
+DEAD_PROCESS_THRESHOLD = 3  # consecutive polls (~3s) before triggering
+SHELL_COMMANDS = {"bash", "zsh", "sh", "fish", "dash"}
+_dead_process_counts: dict[str, int] = {}  # window_id → consecutive dead count
+
+
+async def send_restart_browser(
+    bot: Bot,
+    application: Application,  # type: ignore[type-arg]
+    user_id: int,
+    thread_id: int,
+    notification: str = "⚠️ Claude Code process has exited.\nSelect a directory to start a new session.",
+) -> None:
+    """Send directory browser to a topic after process death or /restart.
+
+    Sets user_data state so the directory browser callback handlers work correctly.
+    """
+    chat_id = session_manager.resolve_chat_id(user_id, thread_id)
+    default_path = str(Path.cwd())
+    msg_text, keyboard, dirs = build_directory_browser(default_path)
+    full_text = f"{notification}\n\n{msg_text}"
+
+    await safe_send(
+        bot, chat_id, full_text, message_thread_id=thread_id, reply_markup=keyboard
+    )
+
+    # Set browsing state so callback handlers work
+    # user_data is dict at runtime; Mapping type annotation is overly strict
+    all_user_data: dict = application.user_data  # type: ignore[assignment]
+    user_data = all_user_data.setdefault(user_id, {})
+    user_data[STATE_KEY] = STATE_BROWSING_DIRECTORY
+    user_data[BROWSE_PATH_KEY] = default_path
+    user_data[BROWSE_PAGE_KEY] = 0
+    user_data[BROWSE_DIRS_KEY] = dirs
+    user_data["_pending_thread_id"] = thread_id
 
 
 async def update_status_message(
@@ -119,8 +169,9 @@ async def update_status_message(
     # If no status line, keep existing status message (don't clear on transient state)
 
 
-async def status_poll_loop(bot: Bot) -> None:
+async def status_poll_loop(application: Application) -> None:  # type: ignore[type-arg]
     """Background task to poll terminal status for all thread-bound windows."""
+    bot = application.bot
     logger.info("Status polling started (interval: %ss)", STATUS_POLL_INTERVAL)
     last_topic_check = 0.0
     while True:
@@ -170,6 +221,7 @@ async def status_poll_loop(bot: Bot) -> None:
                     # Clean up stale bindings (window no longer exists)
                     w = await tmux_manager.find_window_by_id(wid)
                     if not w:
+                        _dead_process_counts.pop(wid, None)
                         session_manager.unbind_thread(user_id, thread_id)
                         await clear_topic_state(user_id, thread_id, bot)
                         logger.info(
@@ -179,6 +231,30 @@ async def status_poll_loop(bot: Bot) -> None:
                             wid,
                         )
                         continue
+
+                    # Dead process detection: shell as foreground = Claude exited
+                    cmd = w.pane_current_command
+                    if cmd and cmd in SHELL_COMMANDS:
+                        _dead_process_counts[wid] = _dead_process_counts.get(wid, 0) + 1
+                        if _dead_process_counts[wid] >= DEAD_PROCESS_THRESHOLD:
+                            logger.info(
+                                "Dead process detected: window=%s cmd=%s "
+                                "(user=%d, thread=%d)",
+                                wid,
+                                cmd,
+                                user_id,
+                                thread_id,
+                            )
+                            await tmux_manager.kill_window(w.window_id)
+                            session_manager.unbind_thread(user_id, thread_id)
+                            await clear_topic_state(user_id, thread_id, bot)
+                            await send_restart_browser(
+                                bot, application, user_id, thread_id
+                            )
+                            _dead_process_counts.pop(wid, None)
+                            continue
+                    else:
+                        _dead_process_counts.pop(wid, None)
 
                     # UI detection happens unconditionally in update_status_message.
                     # Status enqueue is skipped inside update_status_message when

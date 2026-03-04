@@ -4,8 +4,8 @@ Registers all command/callback/message handlers and manages the bot lifecycle.
 Each Telegram topic maps 1:1 to a tmux window (Claude session).
 
 Core responsibilities:
-  - Command handlers: /start, /history, /screenshot, /esc, /kill, /unbind,
-    plus forwarding unknown /commands to Claude Code via tmux.
+  - Command handlers: /start, /history, /screenshot, /esc, /kill, /restart,
+    /unbind, plus forwarding unknown /commands to Claude Code via tmux.
   - Callback query handler: directory browser, history pagination,
     interactive UI navigation, screenshot refresh.
   - Topic-based routing: each named topic binds to one tmux window.
@@ -129,7 +129,7 @@ from .handlers.message_sender import (
 from .markdown_v2 import convert_markdown
 from .handlers.response_builder import build_response_parts
 from .handlers.custom_commands import make_handler as make_custom_handler
-from .handlers.status_polling import status_poll_loop
+from .handlers.status_polling import send_restart_browser, status_poll_loop
 from .screenshot import text_to_image
 from .session import session_manager
 from .session_monitor import NewMessage, SessionMonitor
@@ -285,6 +285,98 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"✅ Topic unbound from window '{display}'.\n"
         "The Claude session is still running in tmux.\n"
         "Send a message to bind to a new session.",
+    )
+
+
+async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Kill the tmux window bound to this topic and clean up all state."""
+    user = update.effective_user
+    if not is_allowed(update):
+        return
+    assert user is not None
+    if not update.message:
+        return
+
+    thread_id = _get_thread_id(update)
+    if thread_id is None:
+        await safe_reply(update.message, "❌ This command only works in a topic.")
+        return
+
+    wid = session_manager.get_window_for_thread(user.id, thread_id)
+    if not wid:
+        await safe_reply(update.message, "❌ No session bound to this topic.")
+        return
+
+    display = session_manager.get_display_name(wid)
+    w = await tmux_manager.find_window_by_id(wid)
+    if w:
+        await tmux_manager.kill_window(w.window_id)
+        logger.info(
+            "Kill command: killed window %s (user=%d, thread=%d)",
+            display,
+            user.id,
+            thread_id,
+        )
+    else:
+        logger.info(
+            "Kill command: window %s already gone (user=%d, thread=%d)",
+            display,
+            user.id,
+            thread_id,
+        )
+
+    session_manager.unbind_thread(user.id, thread_id)
+    await clear_topic_state(user.id, thread_id, context.bot, context.user_data)
+
+    await safe_reply(update.message, "🗑 Session killed and topic unbound.")
+
+
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Kill the tmux window and show directory browser to start a new session."""
+    user = update.effective_user
+    if not is_allowed(update):
+        return
+    assert user is not None
+    if not update.message:
+        return
+
+    thread_id = _get_thread_id(update)
+    if thread_id is None:
+        await safe_reply(update.message, "❌ This command only works in a topic.")
+        return
+
+    wid = session_manager.get_window_for_thread(user.id, thread_id)
+    if not wid:
+        await safe_reply(update.message, "❌ No session bound to this topic.")
+        return
+
+    display = session_manager.get_display_name(wid)
+    w = await tmux_manager.find_window_by_id(wid)
+    if w:
+        await tmux_manager.kill_window(w.window_id)
+        logger.info(
+            "Restart command: killed window %s (user=%d, thread=%d)",
+            display,
+            user.id,
+            thread_id,
+        )
+    else:
+        logger.info(
+            "Restart command: window %s already gone (user=%d, thread=%d)",
+            display,
+            user.id,
+            thread_id,
+        )
+
+    session_manager.unbind_thread(user.id, thread_id)
+    await clear_topic_state(user.id, thread_id, context.bot, context.user_data)
+
+    await send_restart_browser(
+        context.bot,
+        context.application,
+        user.id,
+        thread_id,
+        notification="🔄 Session killed. Select a directory to start a new session.",
     )
 
 
@@ -1934,8 +2026,9 @@ async def post_init(application: Application) -> None:
         BotCommand("history", "Message history for this topic"),
         BotCommand("screenshot", "Terminal screenshot with control keys"),
         BotCommand("esc", "Send Escape to interrupt Claude"),
-        BotCommand("kill", "Kill session and delete topic"),
+        BotCommand("kill", "Kill session in this topic"),
         BotCommand("unbind", "Unbind topic from session (keeps window running)"),
+        BotCommand("restart", "Restart Claude Code session"),
         BotCommand("usage", "Show Claude Code usage remaining"),
     ]
     # Add Claude Code slash commands
@@ -1977,7 +2070,7 @@ async def post_init(application: Application) -> None:
     logger.info("Session monitor started")
 
     # Start status polling task
-    _status_poll_task = asyncio.create_task(status_poll_loop(application.bot))
+    _status_poll_task = asyncio.create_task(status_poll_loop(application))
     logger.info("Status polling task started")
 
 
@@ -2019,6 +2112,8 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("screenshot", screenshot_command))
     application.add_handler(CommandHandler("esc", esc_command))
     application.add_handler(CommandHandler("unbind", unbind_command))
+    application.add_handler(CommandHandler("kill", kill_command))
+    application.add_handler(CommandHandler("restart", restart_command))
     application.add_handler(CommandHandler("usage", usage_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
