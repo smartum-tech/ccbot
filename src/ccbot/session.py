@@ -110,6 +110,8 @@ class SessionManager:
     # History: originally added in 5afc111, erroneously removed in 26cb81f,
     # restored in PR #23.
     group_chat_ids: dict[int, int] = field(default_factory=dict)
+    # thread_id -> (session_id, cwd, window_name) — saved on unbind for crash recovery
+    _last_session_info: dict[int, tuple[str, str, str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._load_state()
@@ -126,6 +128,9 @@ class SessionManager:
             "window_display_names": self.window_display_names,
             "group_chat_ids": {
                 str(tid): cid for tid, cid in self.group_chat_ids.items()
+            },
+            "last_session_info": {
+                str(tid): list(info) for tid, info in self._last_session_info.items()
             },
         }
         atomic_write_json(config.state_file, state)
@@ -166,6 +171,14 @@ class SessionManager:
                 raw_chat_ids = state.get("group_chat_ids", {})
                 self.group_chat_ids = self._migrate_group_chat_ids(raw_chat_ids)
 
+                # Load last_session_info for crash recovery
+                raw_lsi = state.get("last_session_info", {})
+                self._last_session_info = {
+                    int(tid): tuple(info)  # type: ignore[arg-type]
+                    for tid, info in raw_lsi.items()
+                    if isinstance(info, list) and len(info) == 3
+                }
+
                 # Detect old format: keys that don't look like window IDs
                 needs_migration = False
                 for k in self.window_states:
@@ -191,6 +204,7 @@ class SessionManager:
                 self.thread_bindings = {}
                 self.window_display_names = {}
                 self.group_chat_ids = {}
+                self._last_session_info = {}
 
     @staticmethod
     def _migrate_thread_bindings(raw: dict[str, Any]) -> dict[int, str]:
@@ -793,6 +807,7 @@ class SessionManager:
             window_name: Display name for the window (optional)
         """
         self.thread_bindings[thread_id] = window_id
+        self._last_session_info.pop(thread_id, None)
         if window_name:
             self.window_display_names[window_id] = window_name
         self._save_state()
@@ -805,10 +820,19 @@ class SessionManager:
         )
 
     def unbind_thread(self, thread_id: int) -> str | None:
-        """Remove a thread binding. Returns the previously bound window_id, or None."""
+        """Remove a thread binding. Returns the previously bound window_id, or None.
+
+        Saves session info (session_id, cwd, window_name) from window_states
+        into _last_session_info for crash recovery before removing the binding.
+        """
         window_id = self.thread_bindings.pop(thread_id, None)
         if window_id is None:
             return None
+        # Save session info for crash recovery menu
+        ws = self.window_states.get(window_id)
+        if ws and ws.session_id and ws.cwd:
+            wname = ws.window_name or self.window_display_names.get(window_id, "")
+            self._last_session_info[thread_id] = (ws.session_id, ws.cwd, wname)
         self._save_state()
         logger.info(
             "Unbound thread %d (was %s)",
@@ -856,6 +880,20 @@ class SessionManager:
             if resolved and resolved.session_id == session_id:
                 result.append((thread_id, window_id))
         return result
+
+    # --- Crash recovery (last session info) ---
+
+    def get_last_session_info(self, thread_id: int) -> tuple[str, str, str] | None:
+        """Get saved session info for a thread after unbind.
+
+        Returns (session_id, cwd, window_name) or None if not available.
+        """
+        return self._last_session_info.get(thread_id)
+
+    def clear_last_session_info(self, thread_id: int) -> None:
+        """Clear saved session info for a thread."""
+        if self._last_session_info.pop(thread_id, None) is not None:
+            self._save_state()
 
     # --- Tmux helpers ---
 

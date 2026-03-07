@@ -68,6 +68,8 @@ from .handlers.callback_data import (
     CB_ASK_SPACE,
     CB_ASK_TAB,
     CB_ASK_UP,
+    CB_CRASH_NEW,
+    CB_CRASH_RESUME,
     CB_DIR_CANCEL,
     CB_DIR_CONFIRM,
     CB_DIR_PAGE,
@@ -130,7 +132,11 @@ from .markdown_v2 import convert_markdown
 from .handlers.response_builder import build_response_parts
 from .handlers.custom_commands import make_handler as make_custom_handler
 from .handlers.custom_commands import make_service_handler
-from .handlers.status_polling import send_restart_browser, status_poll_loop
+from .handlers.status_polling import (
+    send_crash_menu,
+    send_restart_browser,
+    status_poll_loop,
+)
 from .handlers.tools import tools_command
 from .screenshot import text_to_image
 from .session import session_manager
@@ -216,7 +222,10 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     thread_id = _get_thread_id(update)
     wid = session_manager.resolve_window_for_thread(thread_id)
     if not wid:
-        await safe_reply(update.message, "❌ No session bound to this topic.")
+        await safe_reply(
+            update.message,
+            "❌ No session bound to this topic. Use /restart to resume or start a new session.",
+        )
         return
 
     await send_history(update.message, wid)
@@ -236,7 +245,10 @@ async def screenshot_command(
     thread_id = _get_thread_id(update)
     wid = session_manager.resolve_window_for_thread(thread_id)
     if not wid:
-        await safe_reply(update.message, "❌ No session bound to this topic.")
+        await safe_reply(
+            update.message,
+            "❌ No session bound to this topic. Use /restart to resume or start a new session.",
+        )
         return
 
     w = await tmux_manager.find_window_by_id(wid)
@@ -275,7 +287,10 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     wid = session_manager.get_window_for_thread(thread_id)
     if not wid:
-        await safe_reply(update.message, "❌ No session bound to this topic.")
+        await safe_reply(
+            update.message,
+            "❌ No session bound to this topic. Use /restart to resume or start a new session.",
+        )
         return
 
     display = session_manager.get_display_name(wid)
@@ -308,7 +323,10 @@ async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     wid = session_manager.get_window_for_thread(thread_id)
     if not wid:
-        await safe_reply(update.message, "❌ No session bound to this topic.")
+        await safe_reply(
+            update.message,
+            "❌ No session bound to this topic. Use /restart to resume or start a new session.",
+        )
         return
 
     display = session_manager.get_display_name(wid)
@@ -351,46 +369,44 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await safe_reply(update.message, "❌ This command only works in a topic.")
         return
 
-    wid = session_manager.get_window_for_thread(thread_id)
-    if not wid:
-        await safe_reply(update.message, "❌ No session bound to this topic.")
-        return
-
-    display = session_manager.get_display_name(wid)
-    w = await tmux_manager.find_window_by_id(wid)
-    if w:
-        # Get cwd from live tmux pane (most reliable), fallback to session_map
-        last_cwd = w.cwd or session_manager.get_window_cwd(wid)
-        await tmux_manager.kill_window(w.window_id)
-        logger.info(
-            "Restart command: killed window %s (user=%d, thread=%d)",
-            display,
-            user.id,
-            thread_id,
-        )
-    else:
-        last_cwd = session_manager.get_window_cwd(wid)
-        logger.info(
-            "Restart command: window %s already gone (user=%d, thread=%d)",
-            display,
-            user.id,
-            thread_id,
-        )
-
-    session_manager.unbind_thread(thread_id)
     chat = update.effective_chat
     assert chat is not None
-    await clear_topic_state(chat.id, thread_id, context.bot, context.user_data)
 
-    await send_restart_browser(
-        context.bot,
-        context.application,
-        chat.id,
-        thread_id,
-        notification="🔄 Session killed. Select a directory to start a new session.",
-        last_cwd=last_cwd,
-        user_id=user.id,
-    )
+    wid = session_manager.get_window_for_thread(thread_id)
+    if wid:
+        display = session_manager.get_display_name(wid)
+        w = await tmux_manager.find_window_by_id(wid)
+        if w:
+            await tmux_manager.kill_window(w.window_id)
+            logger.info(
+                "Restart command: killed window %s (user=%d, thread=%d)",
+                display,
+                user.id,
+                thread_id,
+            )
+        else:
+            logger.info(
+                "Restart command: window %s already gone (user=%d, thread=%d)",
+                display,
+                user.id,
+                thread_id,
+            )
+        session_manager.unbind_thread(thread_id)
+        await clear_topic_state(chat.id, thread_id, context.bot, context.user_data)
+
+    # Show crash menu if we have saved session info, otherwise directory browser
+    info = session_manager.get_last_session_info(thread_id)
+    if info:
+        await send_crash_menu(context.bot, chat.id, thread_id)
+    else:
+        await send_restart_browser(
+            context.bot,
+            context.application,
+            chat.id,
+            thread_id,
+            notification="🔄 Session killed. Select a directory to start a new session.",
+            user_id=user.id,
+        )
 
 
 async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -405,7 +421,10 @@ async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     thread_id = _get_thread_id(update)
     wid = session_manager.resolve_window_for_thread(thread_id)
     if not wid:
-        await safe_reply(update.message, "❌ No session bound to this topic.")
+        await safe_reply(
+            update.message,
+            "❌ No session bound to this topic. Use /restart to resume or start a new session.",
+        )
         return
 
     w = await tmux_manager.find_window_by_id(wid)
@@ -431,7 +450,10 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     thread_id = _get_thread_id(update)
     wid = session_manager.resolve_window_for_thread(thread_id)
     if not wid:
-        await safe_reply(update.message, "No session bound to this topic.")
+        await safe_reply(
+            update.message,
+            "❌ No session bound to this topic. Use /restart to resume or start a new session.",
+        )
         return
 
     w = await tmux_manager.find_window_by_id(wid)
@@ -637,7 +659,10 @@ async def forward_command_handler(
         cc_slash = "/" + original + ((" " + parts[1]) if len(parts) > 1 else "")
     wid = session_manager.resolve_window_for_thread(thread_id)
     if not wid:
-        await safe_reply(update.message, "❌ No session bound to this topic.")
+        await safe_reply(
+            update.message,
+            "❌ No session bound to this topic. Use /restart to resume or start a new session.",
+        )
         return
 
     w = await tmux_manager.find_window_by_id(wid)
@@ -1771,6 +1796,50 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             context.user_data.pop("_pending_thread_text", None)
         await safe_edit(query, "Cancelled")
         await query.answer("Cancelled")
+
+    # Crash recovery: Resume
+    elif data.startswith(CB_CRASH_RESUME):
+        try:
+            crash_thread_id = int(data[len(CB_CRASH_RESUME) :])
+        except ValueError:
+            await query.answer("Invalid data")
+            return
+        info = session_manager.get_last_session_info(crash_thread_id)
+        if not info:
+            await safe_edit(query, "❌ Session info no longer available. Use /restart.")
+            await query.answer("Session info expired")
+            return
+        resume_sid, resume_cwd, resume_wname = info
+        await query.answer("Resuming session…")
+        await _create_and_bind_window(
+            query,
+            context,
+            user,
+            resume_cwd,
+            crash_thread_id,
+            resume_session_id=resume_sid,
+        )
+
+    # Crash recovery: New session
+    elif data.startswith(CB_CRASH_NEW):
+        try:
+            crash_thread_id = int(data[len(CB_CRASH_NEW) :])
+        except ValueError:
+            await query.answer("Invalid data")
+            return
+        info = session_manager.get_last_session_info(crash_thread_id)
+        last_cwd = info[1] if info else None
+        session_manager.clear_last_session_info(crash_thread_id)
+        await query.answer("Starting new session…")
+        await safe_edit(query, "Starting new session…")
+        await send_restart_browser(
+            context.bot,
+            context.application,
+            chat.id,
+            crash_thread_id,
+            last_cwd=last_cwd,
+            user_id=user.id,
+        )
 
     # Screenshot: Refresh
     elif data.startswith(CB_SCREENSHOT_REFRESH):

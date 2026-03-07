@@ -24,7 +24,7 @@ import logging
 import time
 from pathlib import Path
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import Application
 
@@ -46,6 +46,7 @@ from .interactive_ui import (
     get_interactive_window,
     handle_interactive_ui,
 )
+from .callback_data import CB_CRASH_NEW, CB_CRASH_RESUME
 from .message_queue import enqueue_status_update, get_message_queue
 from .message_sender import safe_send
 
@@ -102,6 +103,35 @@ async def send_restart_browser(
 
     await safe_send(
         bot, chat_id, full_text, message_thread_id=thread_id, reply_markup=keyboard
+    )
+
+
+async def send_crash_menu(
+    bot: Bot,
+    chat_id: int,
+    thread_id: int,
+) -> None:
+    """Show Resume/New session menu after crash detection."""
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "▶️ Resume",
+                    callback_data=f"{CB_CRASH_RESUME}{thread_id}",
+                ),
+                InlineKeyboardButton(
+                    "🆕 New session",
+                    callback_data=f"{CB_CRASH_NEW}{thread_id}",
+                ),
+            ]
+        ]
+    )
+    await safe_send(
+        bot,
+        chat_id,
+        "⚠️ Claude Code process has exited.\nChoose an action:",
+        message_thread_id=thread_id,
+        reply_markup=keyboard,
     )
 
 
@@ -232,6 +262,10 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                     # Clean up stale bindings (window no longer exists)
                     w = await tmux_manager.find_window_by_id(wid)
                     if not w:
+                        ws = session_manager.window_states.get(wid)
+                        has_session_info = ws is not None and bool(
+                            ws.session_id and ws.cwd
+                        )
                         _dead_process_counts.pop(wid, None)
                         _seen_alive.discard(wid)
                         session_manager.unbind_thread(thread_id)
@@ -241,6 +275,12 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                             thread_id,
                             wid,
                         )
+                        if has_session_info:
+                            await send_crash_menu(bot, chat_id, thread_id)
+                        else:
+                            await send_restart_browser(
+                                bot, application, chat_id, thread_id
+                            )
                         continue
 
                     # Dead process detection: shell as foreground = Claude exited
@@ -260,19 +300,24 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                                     cmd,
                                     thread_id,
                                 )
-                                last_cwd = w.cwd or session_manager.get_window_cwd(wid)
+                                ws = session_manager.window_states.get(wid)
+                                has_session_info = ws is not None and bool(
+                                    ws.session_id and ws.cwd
+                                )
                                 await tmux_manager.kill_window(w.window_id)
                                 session_manager.unbind_thread(thread_id)
                                 await clear_topic_state(chat_id, thread_id, bot)
                                 _seen_alive.discard(wid)
-                                await send_restart_browser(
-                                    bot,
-                                    application,
-                                    chat_id,
-                                    thread_id,
-                                    last_cwd=last_cwd,
-                                )
                                 _dead_process_counts.pop(wid, None)
+                                if has_session_info:
+                                    await send_crash_menu(bot, chat_id, thread_id)
+                                else:
+                                    await send_restart_browser(
+                                        bot,
+                                        application,
+                                        chat_id,
+                                        thread_id,
+                                    )
                                 continue
                     else:
                         # Non-shell command running → Claude is alive

@@ -47,5 +47,9 @@ CB_SESSION_SELECT = "rs:sel:"  # rs:sel:<index>
 CB_SESSION_NEW = "rs:new"  # start a new session
 CB_SESSION_CANCEL = "rs:cancel"  # cancel
 
+# Crash recovery menu
+CB_CRASH_RESUME = "crash:resume:"  # crash:resume:<thread_id>
+CB_CRASH_NEW = "crash:new:"  # crash:new:<thread_id>
+
 # Screenshot control keys
 CB_KEYS_PREFIX = "kb:"  # kb:<key_id>:<window>
