@@ -83,6 +83,7 @@ class Config:
         self.state_file = self.config_dir / "state.json"
         self.session_map_file = self.config_dir / "session_map.json"
         self.monitor_state_file = self.config_dir / "monitor_state.json"
+        self.scheduled_tasks_file = self.config_dir / "scheduled_tasks.json"
 
         # Claude Code session monitoring configuration
         # Support custom projects path for Claude variants (e.g., cc-mirror, zai)
@@ -162,6 +163,7 @@ class Config:
         "unbind",
         "usage",
         "tools",
+        "schedule",
     }
 
     # Valid Telegram command name: 1-32 lowercase alphanumeric + underscores

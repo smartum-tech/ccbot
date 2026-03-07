@@ -12,6 +12,11 @@ uv run ruff format src/ tests/        # Format — auto-fix, then verify with --
 uv run pyright src/ccbot/             # Type check — MUST be 0 errors before committing
 ./scripts/restart.sh                  # Restart the ccbot service after code changes
 ccbot hook --install                  # Auto-install Claude Code SessionStart hook
+ccbot schedule --in 2h --prompt "Check tests"      # One-shot in 2 hours
+ccbot schedule --at "14:00" --prompt "Deploy"       # One-shot at 14:00
+ccbot schedule --every 1h --prompt "Monitor"        # Repeating every hour
+ccbot schedule --list                               # List tasks
+ccbot schedule --cancel <id>                        # Cancel task
 ```
 
 ## Core Design Constraints

@@ -51,5 +51,9 @@ CB_SESSION_CANCEL = "rs:cancel"  # cancel
 CB_CRASH_RESUME = "crash:resume:"  # crash:resume:<thread_id>
 CB_CRASH_NEW = "crash:new:"  # crash:new:<thread_id>
 
+# Scheduled tasks
+CB_SCHEDULE_CANCEL = "sched:c:"  # sched:c:<task_id_prefix>
+CB_SCHEDULE_RUN = "sched:r:"  # sched:r:<task_id_prefix>
+
 # Screenshot control keys
 CB_KEYS_PREFIX = "kb:"  # kb:<key_id>:<window>

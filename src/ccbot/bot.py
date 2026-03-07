@@ -70,6 +70,8 @@ from .handlers.callback_data import (
     CB_ASK_UP,
     CB_CRASH_NEW,
     CB_CRASH_RESUME,
+    CB_SCHEDULE_CANCEL,
+    CB_SCHEDULE_RUN,
     CB_DIR_CANCEL,
     CB_DIR_CONFIRM,
     CB_DIR_PAGE,
@@ -487,6 +489,70 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if len(trimmed) > 3000:
             trimmed = trimmed[:3000] + "\n... (truncated)"
         await safe_reply(update.message, f"```\n{trimmed}\n```")
+
+
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List or cancel scheduled tasks for the current topic."""
+    if not is_allowed(update):
+        return
+    if not update.message:
+        return
+
+    thread_id = _get_thread_id(update)
+    if thread_id is None:
+        await safe_reply(update.message, "Use this command inside a topic.")
+        return
+
+    args_text = update.message.text or ""
+    parts = args_text.split(maxsplit=2)
+    # parts[0] is "/schedule"
+
+    from .scheduler import get_task_scheduler
+
+    scheduler = get_task_scheduler()
+    scheduler.reload_if_changed()
+
+    # /schedule cancel <id>
+    if len(parts) >= 3 and parts[1] == "cancel":
+        task_id_prefix = parts[2]
+        cancelled = scheduler.cancel_task(task_id_prefix)
+        if cancelled:
+            await safe_reply(
+                update.message,
+                f"✅ Cancelled: {cancelled.short_id} — {cancelled.description}",
+            )
+        else:
+            await safe_reply(update.message, f"❌ No task matching '{task_id_prefix}'")
+        return
+
+    # /schedule or /schedule list — show tasks for this topic
+    tasks = scheduler.get_tasks_for_thread(thread_id)
+    if not tasks:
+        await safe_reply(update.message, "No scheduled tasks for this topic.")
+        return
+
+    from datetime import datetime
+
+    lines = []
+    buttons = []
+    for t in tasks:
+        ts = datetime.fromtimestamp(t.scheduled_time).strftime("%H:%M")
+        repeat_str = f" ↻{t.repeat}" if t.repeat else ""
+        lines.append(
+            f"• `{t.short_id}` {ts} (in {t.time_until()}){repeat_str}\n  {t.description}"
+        )
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"Cancel {t.short_id}",
+                    callback_data=f"{CB_SCHEDULE_CANCEL}{t.short_id}",
+                )
+            ]
+        )
+
+    text = "⏰ Scheduled tasks:\n\n" + "\n".join(lines)
+    keyboard = InlineKeyboardMarkup(buttons) if buttons else None
+    await safe_reply(update.message, text, reply_markup=keyboard)
 
 
 # --- Screenshot keyboard with quick control keys ---
@@ -1841,6 +1907,49 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             user_id=user.id,
         )
 
+    # Scheduled tasks: Cancel
+    elif data.startswith(CB_SCHEDULE_CANCEL):
+        task_prefix = data[len(CB_SCHEDULE_CANCEL) :]
+        from .scheduler import get_task_scheduler
+
+        scheduler = get_task_scheduler()
+        scheduler.reload_if_changed()
+        cancelled = scheduler.cancel_task(task_prefix)
+        if cancelled:
+            await safe_edit(
+                query, f"✅ Cancelled: {cancelled.short_id} — {cancelled.description}"
+            )
+            await query.answer("Cancelled")
+        else:
+            await query.answer("Task not found", show_alert=True)
+
+    # Scheduled tasks: Manual run
+    elif data.startswith(CB_SCHEDULE_RUN):
+        task_prefix = data[len(CB_SCHEDULE_RUN) :]
+        from .scheduler import get_task_scheduler
+
+        scheduler = get_task_scheduler()
+        scheduler.reload_if_changed()
+        # Find task by prefix
+        tasks = scheduler.list_tasks()
+        target = None
+        for t in tasks:
+            if t.task_id.startswith(task_prefix):
+                target = t
+                break
+        if target and target.status in ("pending", "failed"):
+            target.scheduled_time = time.time()  # Make it due now
+            target.status = "pending"
+            target.resume_attempts = 0
+            scheduler.update_task(target)
+            scheduler.save_tasks()
+            await safe_edit(
+                query, f"▶️ Task {target.short_id} queued for immediate execution."
+            )
+            await query.answer("Queued")
+        else:
+            await query.answer("Task not found or already running", show_alert=True)
+
     # Screenshot: Refresh
     elif data.startswith(CB_SCREENSHOT_REFRESH):
         window_id = data[len(CB_SCREENSHOT_REFRESH) :]
@@ -2096,8 +2205,11 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
 # --- App lifecycle ---
 
 
+_scheduler_task: asyncio.Task | None = None
+
+
 async def post_init(application: Application) -> None:
-    global session_monitor, _status_poll_task
+    global session_monitor, _status_poll_task, _scheduler_task
 
     await application.bot.delete_my_commands()
 
@@ -2111,6 +2223,7 @@ async def post_init(application: Application) -> None:
         BotCommand("restart", "Restart Claude Code session"),
         BotCommand("usage", "Show Claude Code usage remaining"),
         BotCommand("tools", "List available commands and skills"),
+        BotCommand("schedule", "Manage scheduled tasks"),
     ]
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
@@ -2158,9 +2271,25 @@ async def post_init(application: Application) -> None:
     _status_poll_task = asyncio.create_task(status_poll_loop(application))
     logger.info("Status polling task started")
 
+    # Start scheduler loop
+    from .scheduler import scheduler_loop
+
+    _scheduler_task = asyncio.create_task(scheduler_loop(application))
+    logger.info("Scheduler task started")
+
 
 async def post_shutdown(application: Application) -> None:
-    global _status_poll_task
+    global _status_poll_task, _scheduler_task
+
+    # Stop scheduler
+    if _scheduler_task:
+        _scheduler_task.cancel()
+        try:
+            await _scheduler_task
+        except asyncio.CancelledError:
+            pass
+        _scheduler_task = None
+        logger.info("Scheduler stopped")
 
     # Stop status polling
     if _status_poll_task:
@@ -2201,6 +2330,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("restart", restart_command))
     application.add_handler(CommandHandler("usage", usage_command))
     application.add_handler(CommandHandler("tools", tools_command))
+    application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(
