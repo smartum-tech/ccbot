@@ -1,13 +1,15 @@
-"""Custom shell command handlers defined via CUSTOM_CMD_* env vars.
+"""Custom and service shell command handlers.
 
-Executes shell commands directly via subprocess, bypassing Claude Code.
-Each command runs in the working directory of the bound session (or $HOME).
+Custom commands: defined via CUSTOM_CMD_* env vars, run in bound session cwd.
+Service commands: defined via commands.json, run anywhere (including General topic),
+with CCBOT_* env vars and user arguments appended.
 
-Key function: make_handler() — factory that returns an async handler for a given command.
+Key functions: make_handler(), make_service_handler().
 """
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from collections.abc import Callable, Coroutine
@@ -47,6 +49,7 @@ async def _execute_custom_command(
     _context: ContextTypes.DEFAULT_TYPE,
     cmd_name: str,
     shell_command: str,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
     """Execute a custom shell command and reply with its output."""
     user = update.effective_user
@@ -68,12 +71,17 @@ async def _execute_custom_command(
 
     await update.message.chat.send_action(ChatAction.TYPING)
 
+    env = None
+    if extra_env:
+        env = {**os.environ, **extra_env}
+
     try:
         proc = await asyncio.create_subprocess_shell(
             shell_command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(cwd),
+            env=env,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_TIMEOUT_SECONDS)
         output = stdout.decode("utf-8", errors="replace").rstrip()
@@ -107,5 +115,64 @@ def make_handler(cmd_name: str, shell_command: str) -> _Handler:
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _execute_custom_command(update, context, cmd_name, shell_command)
+
+    return handler
+
+
+def make_service_handler(cmd_name: str, shell_command: str) -> _Handler:
+    """Factory: return an async handler for a service command from commands.json.
+
+    Unlike custom commands, service commands:
+    - Work in General topic (no _get_thread_id gate)
+    - Append user arguments to the shell command
+    - Pass CCBOT_* env vars to the subprocess
+    """
+
+    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.effective_user
+        if not user or not config.is_user_allowed(user.id):
+            return
+        if not update.message:
+            return
+
+        # Extract user arguments: "/cmd arg1 arg2" → "arg1 arg2"
+        text = update.message.text or ""
+        parts = text.split(maxsplit=1)
+        user_args = parts[1] if len(parts) > 1 else ""
+
+        # Build full command with appended args
+        full_command = f"{shell_command} {user_args}" if user_args else shell_command
+
+        # Resolve session info (works in both General and child topics)
+        msg = update.message
+        tid = getattr(msg, "message_thread_id", None)
+        # For child topics, resolve window/cwd
+        thread_id = tid if tid and tid != 1 else None
+        wid = session_manager.resolve_window_for_thread(thread_id)
+        session_cwd = ""
+        window_id = ""
+        if wid:
+            window_id = wid
+            cwd_str = session_manager.get_window_cwd(wid)
+            if cwd_str:
+                session_cwd = cwd_str
+            else:
+                w = await tmux_manager.find_window_by_id(wid)
+                if w and w.cwd:
+                    session_cwd = w.cwd
+
+        extra_env: dict[str, str] = {
+            "CCBOT_ARGS": user_args,
+            "CCBOT_CHAT_ID": str(msg.chat_id),
+            "CCBOT_THREAD_ID": str(tid) if tid and tid != 1 else "",
+            "CCBOT_USER_ID": str(user.id),
+            "CCBOT_USER_NAME": user.first_name or "",
+            "CCBOT_SESSION_CWD": session_cwd,
+            "CCBOT_WINDOW_ID": window_id,
+        }
+
+        await _execute_custom_command(
+            update, context, cmd_name, full_command, extra_env=extra_env
+        )
 
     return handler

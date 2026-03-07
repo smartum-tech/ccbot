@@ -8,9 +8,11 @@ The module-level `config` instance is imported by nearly every other module.
 Key class: Config (singleton instantiated as `config`).
 """
 
+import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -21,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 # Env vars that must not leak to child processes (e.g. Claude Code via tmux)
 SENSITIVE_ENV_VARS = {"TELEGRAM_BOT_TOKEN", "ALLOWED_USERS", "OPENAI_API_KEY"}
+
+
+@dataclass(frozen=True)
+class ServiceCommand:
+    """A service command loaded from commands.json."""
+
+    command: str
+    description: str
 
 
 class Config:
@@ -123,6 +133,10 @@ class Config:
         self.cc_cmd_original_names: dict[str, str] = {}
         self.custom_commands, self.cc_skill_commands = self._parse_custom_commands()
 
+        # Service commands from commands.json
+        self.service_commands_file = self.config_dir / "commands.json"
+        self.service_commands = self._parse_service_commands()
+
         # Scrub sensitive vars from os.environ so child processes never inherit them.
         # Values are already captured in Config attributes above.
         for var in SENSITIVE_ENV_VARS:
@@ -147,6 +161,7 @@ class Config:
         "kill",
         "unbind",
         "usage",
+        "tools",
     }
 
     # Valid Telegram command name: 1-32 lowercase alphanumeric + underscores
@@ -209,6 +224,64 @@ class Config:
             logger.info("CC skill commands: %s", list(cc_skill_commands.keys()))
 
         return custom_commands, cc_skill_commands
+
+    def _parse_service_commands(self) -> dict[str, ServiceCommand]:
+        """Parse service commands from commands.json.
+
+        Returns empty dict on missing file or parse error (logged as warning).
+        Skips entries that conflict with built-in, custom, or CC skill commands.
+        """
+        if not self.service_commands_file.is_file():
+            return {}
+
+        try:
+            raw = json.loads(self.service_commands_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("Failed to parse %s: %s", self.service_commands_file, e)
+            return {}
+
+        if not isinstance(raw, dict):
+            logger.warning("commands.json: expected object, got %s", type(raw).__name__)
+            return {}
+
+        result: dict[str, ServiceCommand] = {}
+        for name, entry in raw.items():
+            if not self._CMD_NAME_RE.match(name):
+                logger.warning(
+                    "commands.json: invalid command name '%s', skipping", name
+                )
+                continue
+            if name in self.BUILTIN_COMMANDS:
+                logger.warning(
+                    "commands.json: '%s' conflicts with built-in command, skipping",
+                    name,
+                )
+                continue
+            if name in self.custom_commands:
+                logger.warning(
+                    "commands.json: '%s' conflicts with CUSTOM_CMD, skipping", name
+                )
+                continue
+            if name in self.cc_skill_commands:
+                logger.warning(
+                    "commands.json: '%s' conflicts with CC_CMD, skipping", name
+                )
+                continue
+            if not isinstance(entry, dict):
+                logger.warning(
+                    "commands.json: '%s' value must be object, skipping", name
+                )
+                continue
+            command = entry.get("command", "")
+            description = entry.get("description", "")
+            if not command:
+                logger.warning("commands.json: '%s' has empty command, skipping", name)
+                continue
+            result[name] = ServiceCommand(command=command, description=description)
+
+        if result:
+            logger.info("Service commands: %s", list(result.keys()))
+        return result
 
     def container_path(self, host_path: Path) -> Path:
         """Translate a host path under config_dir to the container mount point.

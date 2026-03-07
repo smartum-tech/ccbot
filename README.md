@@ -164,6 +164,49 @@ uv run ccbot
 
 Any unrecognized `/command` is also forwarded to Claude Code as-is (e.g. `/review`, `/doctor`, `/init`).
 
+### Service Commands
+
+Service commands are shell commands configured via a JSON file that work **everywhere** — including the General topic — without requiring a Claude Code session. Useful for deployment scripts, server status checks, and other utility operations.
+
+Create `$CCBOT_DIR/commands.json` (default `~/.ccbot/commands.json`):
+
+```json
+{
+  "deploy": {
+    "command": "./scripts/deploy.sh staging",
+    "description": "Deploy to staging"
+  },
+  "status": {
+    "command": "systemctl status myapp",
+    "description": "Check service status"
+  },
+  "df": {
+    "command": "df -h",
+    "description": "Show disk usage"
+  }
+}
+```
+
+- Keys = command names (lowercase alphanumeric + underscores, 1-32 chars)
+- `command` (required): shell command string — inline or path to script
+- `description` (required): shown in bot menu and `/tools`
+- File absent or empty = zero commands, no error
+- Names conflicting with built-in or custom commands are skipped with a log warning
+
+**Argument passing:** `/deploy staging prod` appends args to the command: `./scripts/deploy.sh staging staging prod`. Also available as `$CCBOT_ARGS`.
+
+**Environment variables passed to scripts:**
+
+| Variable | Description |
+| --- | --- |
+| `CCBOT_ARGS` | Raw arguments from Telegram message (text after `/command`) |
+| `CCBOT_CHAT_ID` | Telegram chat ID |
+| `CCBOT_THREAD_ID` | Topic thread ID (empty if General) |
+| `CCBOT_USER_ID` | Telegram user ID |
+| `CCBOT_USER_NAME` | User's first name |
+| `CCBOT_SESSION_CWD` | Bound session cwd (empty if no session) |
+| `CCBOT_WINDOW_ID` | Tmux window ID (empty if no session) |
+
 ### Topic Workflow
 
 **1 Topic = 1 Window = 1 Session.** The bot runs in Telegram Forum (topics) mode.
@@ -243,6 +286,7 @@ The window must be in the `ccbot` tmux session (configurable via `TMUX_SESSION_N
 | `$CCBOT_DIR/state.json`         | Thread bindings, window states, display names, and per-user read offsets |
 | `$CCBOT_DIR/session_map.json`   | Hook-generated `{tmux_session:window_id: {session_id, cwd, window_name}}` mappings |
 | `$CCBOT_DIR/monitor_state.json` | Monitor byte offsets per session (prevents duplicate notifications)     |
+| `$CCBOT_DIR/commands.json`      | Service commands configuration (optional)                               |
 | `~/.claude/projects/`           | Claude Code session data (read-only)                                    |
 
 ## File Structure

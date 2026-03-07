@@ -162,6 +162,49 @@ uv run ccbot
 
 Любая неизвестная `/command` также пробрасывается в Claude Code как есть (например, `/review`, `/doctor`, `/init`).
 
+### Сервисные команды
+
+Сервисные команды — это shell-команды, настраиваемые через JSON-файл, которые работают **везде**, включая General topic, без необходимости в Claude Code сессии. Удобно для скриптов деплоя, проверки статуса серверов и других утилит.
+
+Создайте `$CCBOT_DIR/commands.json` (по умолчанию `~/.ccbot/commands.json`):
+
+```json
+{
+  "deploy": {
+    "command": "./scripts/deploy.sh staging",
+    "description": "Deploy to staging"
+  },
+  "status": {
+    "command": "systemctl status myapp",
+    "description": "Check service status"
+  },
+  "df": {
+    "command": "df -h",
+    "description": "Show disk usage"
+  }
+}
+```
+
+- Ключи = имена команд (строчные буквы, цифры, подчёркивания, 1-32 символа)
+- `command` (обязательно): shell-команда — inline или путь к скрипту
+- `description` (обязательно): отображается в меню бота и `/tools`
+- Файл отсутствует или пуст = ноль команд, без ошибок
+- Имена, конфликтующие со встроенными или пользовательскими командами, пропускаются с предупреждением в логах
+
+**Передача аргументов:** `/deploy staging prod` добавляет аргументы к команде: `./scripts/deploy.sh staging staging prod`. Также доступны через `$CCBOT_ARGS`.
+
+**Переменные окружения, передаваемые скриптам:**
+
+| Переменная | Описание |
+| --- | --- |
+| `CCBOT_ARGS` | Аргументы из Telegram-сообщения (текст после `/command`) |
+| `CCBOT_CHAT_ID` | Telegram chat ID |
+| `CCBOT_THREAD_ID` | ID topic (пусто для General) |
+| `CCBOT_USER_ID` | Telegram user ID |
+| `CCBOT_USER_NAME` | Имя пользователя |
+| `CCBOT_SESSION_CWD` | Рабочая директория привязанной сессии (пусто, если нет сессии) |
+| `CCBOT_WINDOW_ID` | ID tmux-окна (пусто, если нет сессии) |
+
 ### Workflow по topic
 
 **1 topic = 1 window = 1 session.** Бот работает в режиме Telegram Forum Topics.
@@ -252,6 +295,7 @@ claude
 | `$CCBOT_DIR/state.json` | Привязки topic, состояния окон, display names и read-offset на пользователя |
 | `$CCBOT_DIR/session_map.json` | Hook-таблица `{tmux_session:window_id: {session_id, cwd, window_name}}` |
 | `$CCBOT_DIR/monitor_state.json` | Byte-offset монитора по сессиям (предотвращает дубли) |
+| `$CCBOT_DIR/commands.json` | Конфигурация сервисных команд (опционально) |
 | `~/.claude/projects/` | Данные сессий Claude Code (только чтение) |
 
 ## Структура файлов

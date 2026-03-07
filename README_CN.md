@@ -160,6 +160,49 @@ uv run ccbot
 
 其他未识别的 `/command` 也会原样转发给 Claude Code（如 `/review`、`/doctor`、`/init`）。
 
+### 服务命令
+
+服务命令是通过 JSON 文件配置的 shell 命令，可在**任何位置**使用 — 包括 General 话题 — 无需 Claude Code 会话。适用于部署脚本、服务状态检查和其他实用操作。
+
+创建 `$CCBOT_DIR/commands.json`（默认 `~/.ccbot/commands.json`）：
+
+```json
+{
+  "deploy": {
+    "command": "./scripts/deploy.sh staging",
+    "description": "Deploy to staging"
+  },
+  "status": {
+    "command": "systemctl status myapp",
+    "description": "Check service status"
+  },
+  "df": {
+    "command": "df -h",
+    "description": "Show disk usage"
+  }
+}
+```
+
+- 键 = 命令名称（小写字母、数字、下划线，1-32 个字符）
+- `command`（必填）：shell 命令字符串 — 内联命令或脚本路径
+- `description`（必填）：显示在 Bot 菜单和 `/tools` 中
+- 文件不存在或为空 = 零命令，无报错
+- 与内置或自定义命令冲突的名称会被跳过，并记录警告日志
+
+**参数传递：** `/deploy staging prod` 会将参数追加到命令：`./scripts/deploy.sh staging staging prod`。也可通过 `$CCBOT_ARGS` 获取。
+
+**传递给脚本的环境变量：**
+
+| 变量 | 说明 |
+| --- | --- |
+| `CCBOT_ARGS` | Telegram 消息中的原始参数（`/command` 后的文本） |
+| `CCBOT_CHAT_ID` | Telegram 聊天 ID |
+| `CCBOT_THREAD_ID` | 话题 ID（General 时为空） |
+| `CCBOT_USER_ID` | Telegram 用户 ID |
+| `CCBOT_USER_NAME` | 用户名 |
+| `CCBOT_SESSION_CWD` | 绑定会话的工作目录（无会话时为空） |
+| `CCBOT_WINDOW_ID` | tmux 窗口 ID（无会话时为空） |
+
 ### 话题工作流
 
 **1 话题 = 1 窗口 = 1 会话。** Bot 在 Telegram 论坛（话题）模式下运行。
@@ -257,6 +300,7 @@ claude
 | `$CCBOT_DIR/state.json` | 话题绑定、窗口状态、显示名称、每用户读取偏移量 |
 | `$CCBOT_DIR/session_map.json` | Hook 生成的 `{tmux_session:window_id: {session_id, cwd, window_name}}` 映射 |
 | `$CCBOT_DIR/monitor_state.json` | 每会话的监控字节偏移量（防止重复通知） |
+| `$CCBOT_DIR/commands.json` | 服务命令配置（可选） |
 | `~/.claude/projects/` | Claude Code 会话数据（只读） |
 
 ## 文件结构

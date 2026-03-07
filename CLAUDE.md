@@ -34,6 +34,7 @@ ccbot hook --install                  # Auto-install Claude Code SessionStart ho
 - Config directory: `~/.ccbot/` by default, override with `CCBOT_DIR` env var.
 - `.env` loading priority: local `.env` > config dir `.env`.
 - State files: `state.json` (thread bindings), `session_map.json` (hook-generated), `monitor_state.json` (byte offsets).
+- Service commands: `commands.json` — JSON-configured shell commands that work in General topic and child topics without a Claude Code session. See README for format.
 
 ## Hook Configuration
 

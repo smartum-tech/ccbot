@@ -5,7 +5,7 @@ Each Telegram topic maps 1:1 to a tmux window (Claude session).
 
 Core responsibilities:
   - Command handlers: /start, /history, /screenshot, /esc, /kill, /restart,
-    /unbind, plus forwarding unknown /commands to Claude Code via tmux.
+    /unbind, /tools, plus forwarding unknown /commands to Claude Code via tmux.
   - Callback query handler: directory browser, history pagination,
     interactive UI navigation, screenshot refresh.
   - Topic-based routing: each named topic binds to one tmux window.
@@ -129,7 +129,9 @@ from .handlers.message_sender import (
 from .markdown_v2 import convert_markdown
 from .handlers.response_builder import build_response_parts
 from .handlers.custom_commands import make_handler as make_custom_handler
+from .handlers.custom_commands import make_service_handler
 from .handlers.status_polling import send_restart_browser, status_poll_loop
+from .handlers.tools import tools_command
 from .screenshot import text_to_image
 from .session import session_manager
 from .session_monitor import NewMessage, SessionMonitor
@@ -2039,6 +2041,7 @@ async def post_init(application: Application) -> None:
         BotCommand("unbind", "Unbind topic from session (keeps window running)"),
         BotCommand("restart", "Restart Claude Code session"),
         BotCommand("usage", "Show Claude Code usage remaining"),
+        BotCommand("tools", "List available commands and skills"),
     ]
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
@@ -2051,6 +2054,10 @@ async def post_init(application: Application) -> None:
     # CC skill shortcuts (CC_CMD_*)
     for cmd_name, description in config.cc_skill_commands.items():
         bot_commands.append(BotCommand(cmd_name, f"↗ {description[:45]}"))
+
+    # Service commands (commands.json)
+    for cmd_name, svc_cmd in config.service_commands.items():
+        bot_commands.append(BotCommand(cmd_name, f"🔧 {svc_cmd.description[:45]}"))
 
     await application.bot.set_my_commands(bot_commands)
 
@@ -2124,6 +2131,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("kill", kill_command))
     application.add_handler(CommandHandler("restart", restart_command))
     application.add_handler(CommandHandler("usage", usage_command))
+    application.add_handler(CommandHandler("tools", tools_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(
@@ -2143,6 +2151,11 @@ def create_bot() -> Application:
     for cmd_name, shell_cmd in config.custom_commands.items():
         application.add_handler(
             CommandHandler(cmd_name, make_custom_handler(cmd_name, shell_cmd))
+        )
+    # Service commands (commands.json) — before catch-all forward
+    for cmd_name, svc_cmd in config.service_commands.items():
+        application.add_handler(
+            CommandHandler(cmd_name, make_service_handler(cmd_name, svc_cmd.command))
         )
     # Forward any other /command to Claude Code (incl. CC_CMD_* skills)
     application.add_handler(MessageHandler(filters.COMMAND, forward_command_handler))

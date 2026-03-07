@@ -80,6 +80,7 @@ Handler modules (handlers/):
   response_builder.py ─ Response pagination and formatting
   interactive_ui.py   ─ AskUserQuestion / ExitPlanMode / Permission UI
   directory_browser.py─ Directory selection + session picker UI for new topics
+  custom_commands.py  ─ Custom (CUSTOM_CMD_*) and service (commands.json) command handlers
   cleanup.py          ─ Topic state cleanup on close/delete
   callback_data.py    ─ Callback data constants
 
@@ -87,6 +88,7 @@ State files (~/.ccbot/ or $CCBOT_DIR/):
   state.json         ─ thread bindings + window states + display names + read offsets
   session_map.json   ─ hook-generated window_id→session mapping
   monitor_state.json ─ poll progress (byte offset) per JSONL file
+  commands.json      ─ service commands config (optional, JSON-configured shell commands)
 ```
 
 ## Key Design Decisions
