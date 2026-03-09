@@ -399,9 +399,19 @@ async def _auto_resume_and_send(
         )
         return
 
+    # Validate cwd; fall back to home dir for resume
+    resume_cwd = task.cwd
+    if not resume_cwd or not Path(resume_cwd).is_dir():
+        logger.warning(
+            "Task %s cwd '%s' does not exist, falling back to home dir",
+            task.short_id,
+            resume_cwd,
+        )
+        resume_cwd = str(Path.home())
+
     # Create window with resume
     success, message, created_wname, created_wid = await tmux_manager.create_window(
-        task.cwd, resume_session_id=task.session_id
+        resume_cwd, resume_session_id=task.session_id
     )
     if not success:
         task.resume_attempts += 1

@@ -1876,6 +1876,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await query.answer("Session info expired")
             return
         resume_sid, resume_cwd, resume_wname = info
+        # Validate cwd exists; fall back to home dir for resume
+        # (e.g. container path not available on host, or dir deleted)
+        if not resume_cwd or not Path(resume_cwd).is_dir():
+            logger.warning(
+                "Resume cwd '%s' does not exist, falling back to home dir",
+                resume_cwd,
+            )
+            resume_cwd = str(Path.home())
         await query.answer("Resuming session…")
         await _create_and_bind_window(
             query,
