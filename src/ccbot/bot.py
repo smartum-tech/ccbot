@@ -379,6 +379,10 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         display = session_manager.get_display_name(wid)
         w = await tmux_manager.find_window_by_id(wid)
         if w:
+            # Capture host-side cwd before killing (pane_current_path is host path)
+            ws = session_manager.get_window_state(wid)
+            if not ws.host_cwd and w.cwd:
+                ws.host_cwd = w.cwd
             await tmux_manager.kill_window(w.window_id)
             logger.info(
                 "Restart command: killed window %s (user=%d, thread=%d)",

@@ -269,7 +269,7 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                     if not w:
                         ws = session_manager.window_states.get(wid)
                         has_session_info = ws is not None and bool(
-                            ws.session_id and ws.cwd
+                            ws.session_id and (ws.host_cwd or ws.cwd)
                         )
                         _dead_process_counts.pop(wid, None)
                         _seen_alive.discard(wid)
@@ -307,8 +307,11 @@ async def status_poll_loop(application: Application) -> None:  # type: ignore[ty
                                 )
                                 ws = session_manager.window_states.get(wid)
                                 has_session_info = ws is not None and bool(
-                                    ws.session_id and ws.cwd
+                                    ws.session_id and (ws.host_cwd or ws.cwd)
                                 )
+                                # Capture host-side cwd before killing
+                                if ws and not ws.host_cwd and w.cwd:
+                                    ws.host_cwd = w.cwd
                                 await tmux_manager.kill_window(w.window_id)
                                 session_manager.unbind_thread(thread_id)
                                 await clear_topic_state(chat_id, thread_id, bot)
