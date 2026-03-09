@@ -233,14 +233,17 @@ async def _process_schedule(bot: Bot, raw: dict[str, Any], entry: str) -> None:
 
     ws = session_manager.window_states.get(wid)
     session_id = ws.session_id if ws else ""
-    cwd = ws.cwd if ws else ""
+    # Prefer host_cwd (host path) over cwd (may be container path)
+    cwd = (ws.host_cwd or ws.cwd) if ws else ""
 
     # Fall back to session_map.json if window_states is incomplete
     if not session_id:
         session_window_key = f"{config.tmux_session_name}:{wid}"
         info = _resolve_session_info(session_window_key)
         if info:
-            session_id, cwd = info
+            session_id = info[0]
+            if not cwd:
+                cwd = info[1]
 
     description = parsed.description or parsed.prompt[:60]
 

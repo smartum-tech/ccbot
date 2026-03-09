@@ -716,6 +716,28 @@ def _resolve_from_thread_id_env() -> tuple[str, str, str, str, int] | None:
     return tmux_session_name, window_id, window_name, session_window_key, thread_id
 
 
+def _resolve_host_cwd(window_id: str) -> str | None:
+    """Resolve host_cwd for a window from state.json.
+
+    Returns the host-side working directory, or None if not available.
+    Used to override container-internal cwd from session_map.json.
+    """
+    from .utils import ccbot_dir
+
+    state_file = ccbot_dir() / "state.json"
+    if not state_file.exists():
+        return None
+
+    try:
+        state = json.loads(state_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    window_states = state.get("window_states", {})
+    ws = window_states.get(window_id, {})
+    return ws.get("host_cwd") or None
+
+
 def _resolve_session_info(
     session_window_key: str,
 ) -> tuple[str, str] | None:
@@ -885,6 +907,11 @@ def schedule_cli_main() -> None:
         sys.exit(1)
 
     session_id, cwd = session_info
+
+    # Prefer host_cwd from state.json (cwd from session_map may be container path)
+    host_cwd = _resolve_host_cwd(window_id)
+    if host_cwd:
+        cwd = host_cwd
 
     description = args.description or args.prompt[:60]
 
