@@ -196,18 +196,32 @@ mkdir -p "$OUTBOX_DIR"
 UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || node -e "process.stdout.write(require('crypto').randomUUID())")
 TIMESTAMP=$(node -e "process.stdout.write(String(Date.now()/1000))")
 
-# Pass all args as JSON array for the bot to parse
-node -e "
+# Build JSON args array in shell to avoid node interpreting --in as a flag
+ARGS_JSON="["
+first=1
+for arg in "$@"; do
+  if [ "$first" = 1 ]; then
+    first=0
+  else
+    ARGS_JSON="$ARGS_JSON,"
+  fi
+  escaped=$(printf '%s' "$arg" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g')
+  ARGS_JSON="$ARGS_JSON\\"$escaped\\""
+done
+ARGS_JSON="$ARGS_JSON]"
+
+OUTFILE="$OUTBOX_DIR/$UUID.json"
+
+SCHEDULE_ARGS="$ARGS_JSON" node -e "
 const fs = require('fs');
-const args = process.argv.slice(1, -2);
 const data = {
   type: 'schedule',
   thread_id: parseInt(process.env.CCBOT_THREAD_ID),
-  args: args,
-  created_at: parseFloat(process.argv[process.argv.length - 2])
+  args: JSON.parse(process.env.SCHEDULE_ARGS),
+  created_at: parseFloat(process.argv[1])
 };
-fs.writeFileSync(process.argv[process.argv.length - 1], JSON.stringify(data, null, 2) + '\\n');
-" "$@" "$TIMESTAMP" "$OUTBOX_DIR/$UUID.json"
+fs.writeFileSync(process.argv[2], JSON.stringify(data, null, 2) + '\\n');
+" "$TIMESTAMP" "$OUTFILE"
 
 echo "Queued: schedule request -> bot"
 """
