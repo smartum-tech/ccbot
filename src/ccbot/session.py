@@ -46,12 +46,15 @@ class WindowState:
 
     Attributes:
         session_id: Associated Claude session ID (empty if not yet detected)
-        cwd: Working directory for direct file path construction
+        cwd: Working directory from session_map (may be container path in Docker)
+        host_cwd: Original host-side working directory (for resume after crash).
+                  Set at window creation time, never overwritten by session_map.
         window_name: Display name of the window
     """
 
     session_id: str = ""
     cwd: str = ""
+    host_cwd: str = ""
     window_name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +62,8 @@ class WindowState:
             "session_id": self.session_id,
             "cwd": self.cwd,
         }
+        if self.host_cwd:
+            d["host_cwd"] = self.host_cwd
         if self.window_name:
             d["window_name"] = self.window_name
         return d
@@ -68,6 +73,7 @@ class WindowState:
         return cls(
             session_id=data.get("session_id", ""),
             cwd=data.get("cwd", ""),
+            host_cwd=data.get("host_cwd", ""),
             window_name=data.get("window_name", ""),
         )
 
@@ -828,11 +834,13 @@ class SessionManager:
         window_id = self.thread_bindings.pop(thread_id, None)
         if window_id is None:
             return None
-        # Save session info for crash recovery menu
+        # Save session info for crash recovery menu.
+        # Prefer host_cwd (original host path) over cwd (may be container path).
         ws = self.window_states.get(window_id)
-        if ws and ws.session_id and ws.cwd:
+        if ws and ws.session_id and (ws.host_cwd or ws.cwd):
+            cwd = ws.host_cwd or ws.cwd
             wname = ws.window_name or self.window_display_names.get(window_id, "")
-            self._last_session_info[thread_id] = (ws.session_id, ws.cwd, wname)
+            self._last_session_info[thread_id] = (ws.session_id, cwd, wname)
         self._save_state()
         logger.info(
             "Unbound thread %d (was %s)",

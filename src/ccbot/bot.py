@@ -1340,6 +1340,12 @@ async def _create_and_bind_window(
             pending_thread_id,
             resume_session_id,
         )
+        # Record the host-side working directory before the hook potentially
+        # overwrites ws.cwd with a container-internal path.
+        ws = session_manager.get_window_state(created_wid)
+        ws.host_cwd = str(selected_path)
+        session_manager._save_state()
+
         # Wait for Claude Code's SessionStart hook to register in session_map.
         # Resume sessions take longer to start (loading session state), so use
         # a longer timeout to avoid silently dropping messages.

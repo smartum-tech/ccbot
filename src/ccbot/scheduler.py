@@ -425,13 +425,16 @@ async def _auto_resume_and_send(
         )
         return
 
+    # Record host-side cwd before hook potentially overwrites with container path
+    ws = session_manager.get_window_state(created_wid)
+    ws.host_cwd = resume_cwd
+
     # Wait for hook
     hook_ok = await session_manager.wait_for_session_map_entry(
         created_wid, timeout=15.0
     )
 
     # Override session_id for resume (same pattern as bot.py)
-    ws = session_manager.get_window_state(created_wid)
     if not hook_ok:
         logger.warning(
             "Hook timed out for scheduled resume window %s, "
