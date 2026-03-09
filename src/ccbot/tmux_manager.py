@@ -370,6 +370,7 @@ class TmuxManager:
         window_name: str | None = None,
         start_claude: bool = True,
         resume_session_id: str | None = None,
+        thread_id: int | None = None,
     ) -> tuple[bool, str, str, str]:
         """Create a new tmux window and optionally start Claude Code.
 
@@ -378,6 +379,7 @@ class TmuxManager:
             window_name: Optional window name (defaults to directory name)
             start_claude: Whether to start claude command
             resume_session_id: If set, append --resume <id> to claude command
+            thread_id: If set, substitute {CCBOT_THREAD_ID} placeholder
 
         Returns:
             Tuple of (success, message, window_name, window_id)
@@ -424,6 +426,8 @@ class TmuxManager:
                         map_file = str(config.session_map_file)
                         cmd = cmd.replace("{CCBOT_WINDOW_KEY}", window_key)
                         cmd = cmd.replace("{CCBOT_MAP_FILE}", map_file)
+                        if thread_id is not None:
+                            cmd = cmd.replace("{CCBOT_THREAD_ID}", str(thread_id))
                         if resume_session_id:
                             cmd = f"{cmd} --resume {resume_session_id}"
                         pane.send_keys(cmd, enter=True)

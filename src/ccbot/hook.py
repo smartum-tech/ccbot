@@ -85,6 +85,124 @@ process.stdin.on("end", () => {
 '
 """
 
+# Standalone Docker scripts for CLI commands (bash+node, no ccbot dependency).
+# Installed alongside docker_hook.sh by `ccbot hook --install-docker`.
+
+_DOCKER_SEND_FILE_SCRIPT_NAME = "ccbot-send-file.sh"
+_DOCKER_SEND_FILE_SCRIPT_CONTENT = """\
+#!/bin/sh
+# CCBOT Docker send-file — queue a file for delivery to Telegram topic.
+# Env vars: CCBOT_THREAD_ID (topic id), CCBOT_MAP_FILE (path to derive outbox dir).
+# Usage: ccbot-send-file.sh <file-path> [--caption "text"]
+
+set -e
+
+# Parse args
+FILE_PATH=""
+CAPTION=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --caption) CAPTION="$2"; shift 2 ;;
+    --caption=*) CAPTION="${1#--caption=}"; shift ;;
+    -*) echo "Error: Unknown option $1" >&2; exit 1 ;;
+    *) FILE_PATH="$1"; shift ;;
+  esac
+done
+
+if [ -z "$FILE_PATH" ]; then
+  echo "Usage: ccbot-send-file.sh <file-path> [--caption \\"text\\"]" >&2
+  exit 1
+fi
+
+# Resolve absolute path
+FILE_PATH="$(cd "$(dirname "$FILE_PATH")" && pwd)/$(basename "$FILE_PATH")"
+
+if [ ! -f "$FILE_PATH" ]; then
+  echo "Error: File not found: $FILE_PATH" >&2
+  exit 1
+fi
+
+# Check file size (50MB limit)
+FILE_SIZE=$(wc -c < "$FILE_PATH" | tr -d ' ')
+MAX_SIZE=52428800
+if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+  echo "Error: File too large ($(( FILE_SIZE / 1048576 )) MB). Telegram limit is 50 MB." >&2
+  exit 1
+fi
+
+if [ -z "$CCBOT_THREAD_ID" ]; then
+  echo "Error: CCBOT_THREAD_ID not set." >&2
+  exit 1
+fi
+
+if [ -z "$CCBOT_MAP_FILE" ]; then
+  echo "Error: CCBOT_MAP_FILE not set." >&2
+  exit 1
+fi
+
+OUTBOX_DIR="$(dirname "$CCBOT_MAP_FILE")/outbox"
+mkdir -p "$OUTBOX_DIR"
+
+UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || node -e "process.stdout.write(require('crypto').randomUUID())")
+TIMESTAMP=$(node -e "process.stdout.write(String(Date.now()/1000))")
+
+node -e "
+const fs = require('fs');
+const data = {
+  thread_id: parseInt(process.env.CCBOT_THREAD_ID),
+  file_path: process.argv[1],
+  caption: process.argv[2] || '',
+  created_at: parseFloat(process.argv[3])
+};
+fs.writeFileSync(process.argv[4], JSON.stringify(data, null, 2) + '\\n');
+" "$FILE_PATH" "$CAPTION" "$TIMESTAMP" "$OUTBOX_DIR/$UUID.json"
+
+echo "Queued: $(basename "$FILE_PATH") -> Telegram topic"
+"""
+
+_DOCKER_SCHEDULE_SCRIPT_NAME = "ccbot-schedule.sh"
+_DOCKER_SCHEDULE_SCRIPT_CONTENT = """\
+#!/bin/sh
+# CCBOT Docker schedule — queue a schedule request for the bot to process.
+# Env vars: CCBOT_THREAD_ID (topic id), CCBOT_MAP_FILE (path to derive outbox dir).
+# Usage: ccbot-schedule.sh --in 10m --prompt "text" [--description "label"]
+#        ccbot-schedule.sh --at 14:00 --prompt "text"
+#        ccbot-schedule.sh --every 1h --prompt "text"
+
+set -e
+
+if [ -z "$CCBOT_THREAD_ID" ]; then
+  echo "Error: CCBOT_THREAD_ID not set." >&2
+  exit 1
+fi
+
+if [ -z "$CCBOT_MAP_FILE" ]; then
+  echo "Error: CCBOT_MAP_FILE not set." >&2
+  exit 1
+fi
+
+OUTBOX_DIR="$(dirname "$CCBOT_MAP_FILE")/outbox"
+mkdir -p "$OUTBOX_DIR"
+
+UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || node -e "process.stdout.write(require('crypto').randomUUID())")
+TIMESTAMP=$(node -e "process.stdout.write(String(Date.now()/1000))")
+
+# Pass all args as JSON array for the bot to parse
+node -e "
+const fs = require('fs');
+const args = process.argv.slice(1, -2);
+const data = {
+  type: 'schedule',
+  thread_id: parseInt(process.env.CCBOT_THREAD_ID),
+  args: args,
+  created_at: parseFloat(process.argv[process.argv.length - 2])
+};
+fs.writeFileSync(process.argv[process.argv.length - 1], JSON.stringify(data, null, 2) + '\\n');
+" "$@" "$TIMESTAMP" "$OUTBOX_DIR/$UUID.json"
+
+echo "Queued: schedule request -> bot"
+"""
+
 
 def _is_docker_hook_installed(settings: dict) -> bool:
     """Check if the Docker hook is already installed."""
@@ -117,19 +235,26 @@ def _install_docker_hook(
     """
     from .utils import ccbot_dir
 
-    # Write the hook script to ccbot config dir
+    # Write scripts to ccbot config dir
     state_dir = Path(ccbot_dir_override) if ccbot_dir_override else ccbot_dir()
-    script_path = state_dir / _DOCKER_HOOK_SCRIPT_NAME
-    script_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        script_path.write_text(_DOCKER_HOOK_SCRIPT_CONTENT)
-        script_path.chmod(0o755)
-    except OSError as e:
-        logger.error("Error writing %s: %s", script_path, e)
-        print(f"Error writing {script_path}: {e}", file=sys.stderr)
-        return 1
-    logger.info("Wrote hook script to %s", script_path)
-    print(f"Wrote hook script to {script_path}")
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    scripts = [
+        (_DOCKER_HOOK_SCRIPT_NAME, _DOCKER_HOOK_SCRIPT_CONTENT),
+        (_DOCKER_SEND_FILE_SCRIPT_NAME, _DOCKER_SEND_FILE_SCRIPT_CONTENT),
+        (_DOCKER_SCHEDULE_SCRIPT_NAME, _DOCKER_SCHEDULE_SCRIPT_CONTENT),
+    ]
+    for name, content in scripts:
+        script_path = state_dir / name
+        try:
+            script_path.write_text(content)
+            script_path.chmod(0o755)
+        except OSError as e:
+            logger.error("Error writing %s: %s", script_path, e)
+            print(f"Error writing {script_path}: {e}", file=sys.stderr)
+            return 1
+        logger.info("Wrote script: %s", script_path)
+        print(f"Wrote script: {script_path}")
 
     # Install the settings.json entry
     settings_file = _claude_settings_file(claude_config_dir)

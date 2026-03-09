@@ -1326,7 +1326,9 @@ async def _create_and_bind_window(
     assert isinstance(user, User)
 
     success, message, created_wname, created_wid = await tmux_manager.create_window(
-        selected_path, resume_session_id=resume_session_id
+        selected_path,
+        resume_session_id=resume_session_id,
+        thread_id=pending_thread_id,
     )
     if success:
         logger.info(

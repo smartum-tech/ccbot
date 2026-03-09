@@ -411,7 +411,7 @@ async def _auto_resume_and_send(
 
     # Create window with resume
     success, message, created_wname, created_wid = await tmux_manager.create_window(
-        resume_cwd, resume_session_id=task.session_id
+        resume_cwd, resume_session_id=task.session_id, thread_id=task.thread_id
     )
     if not success:
         task.resume_attempts += 1
@@ -575,7 +575,10 @@ async def scheduler_loop(application: Any) -> None:
 
 
 def _resolve_tmux_context() -> tuple[str, str, str, str, int] | None:
-    """Resolve tmux context from TMUX_PANE env var.
+    """Resolve tmux context from TMUX_PANE env var or CCBOT_THREAD_ID fallback.
+
+    On host: uses TMUX_PANE → tmux query → state.json reverse lookup.
+    In Docker: uses CCBOT_THREAD_ID env var → state.json forward lookup.
 
     Returns (tmux_session, window_id, window_name, session_window_key, thread_id)
     or None if resolution fails.
@@ -583,12 +586,10 @@ def _resolve_tmux_context() -> tuple[str, str, str, str, int] | None:
     from .utils import ccbot_dir
 
     pane_id = os.environ.get("TMUX_PANE", "")
+
+    # Docker fallback: CCBOT_THREAD_ID env var (set via placeholder in claude_command)
     if not pane_id:
-        print(
-            "Error: TMUX_PANE not set. Run this from inside a tmux pane.",
-            file=sys.stderr,
-        )
-        return None
+        return _resolve_from_thread_id_env()
 
     result = subprocess.run(
         [
@@ -639,6 +640,76 @@ def _resolve_tmux_context() -> tuple[str, str, str, str, int] | None:
         )
         return None
 
+    return tmux_session_name, window_id, window_name, session_window_key, thread_id
+
+
+def _resolve_from_thread_id_env() -> tuple[str, str, str, str, int] | None:
+    """Resolve context using CCBOT_THREAD_ID env var (Docker fallback).
+
+    Uses thread_id → window_id from state.json, then window_id → session_window_key
+    from session_map.json.
+
+    Returns (tmux_session, window_id, window_name, session_window_key, thread_id)
+    or None if resolution fails.
+    """
+    from .utils import ccbot_dir
+
+    thread_id_str = os.environ.get("CCBOT_THREAD_ID", "")
+    if not thread_id_str:
+        print(
+            "Error: TMUX_PANE not set and CCBOT_THREAD_ID not set.\n"
+            "Run this from inside a tmux pane or a Docker container "
+            "with CCBOT_THREAD_ID.",
+            file=sys.stderr,
+        )
+        return None
+
+    try:
+        thread_id = int(thread_id_str)
+    except ValueError:
+        print(f"Error: Invalid CCBOT_THREAD_ID: {thread_id_str}", file=sys.stderr)
+        return None
+
+    # Forward lookup: thread_id → window_id from state.json
+    state_file = ccbot_dir() / "state.json"
+    if not state_file.exists():
+        print("Error: state.json not found. Is the bot running?", file=sys.stderr)
+        return None
+
+    try:
+        state = json.loads(state_file.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Error reading state.json: {e}", file=sys.stderr)
+        return None
+
+    bindings = state.get("thread_bindings", {})
+    window_id = bindings.get(str(thread_id))
+    if not window_id:
+        print(
+            f"Error: No window bound to thread {thread_id}.",
+            file=sys.stderr,
+        )
+        return None
+
+    # Resolve window_name and session_window_key from session_map.json
+    map_file = ccbot_dir() / "session_map.json"
+    window_name = ""
+    tmux_session_name = "ccbot"
+
+    if map_file.exists():
+        try:
+            session_map = json.loads(map_file.read_text())
+            # Find entry matching this window_id
+            for key, entry in session_map.items():
+                parts = key.split(":", 1)
+                if len(parts) == 2 and parts[1] == window_id:
+                    tmux_session_name = parts[0]
+                    window_name = entry.get("window_name", "")
+                    break
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    session_window_key = f"{tmux_session_name}:{window_id}"
     return tmux_session_name, window_id, window_name, session_window_key, thread_id
 
 

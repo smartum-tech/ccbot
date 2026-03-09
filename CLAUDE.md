@@ -46,6 +46,8 @@ ccbot send-file <path> [--caption "text"]           # Send file to Telegram topi
 
 Auto-install: `ccbot hook --install`
 
+Docker: `ccbot hook --install-docker` — installs standalone scripts (`docker_hook.sh`, `ccbot-send-file.sh`, `ccbot-schedule.sh`) that work without ccbot in the container.
+
 Or manually in `~/.claude/settings.json`:
 ```json
 {
@@ -58,6 +60,23 @@ Or manually in `~/.claude/settings.json`:
   }
 }
 ```
+
+## Docker Setup
+
+When Claude Code runs inside Docker, the `claude_command` should include placeholders:
+```bash
+# Example CLAUDE_COMMAND env var:
+docker run -it -e CCBOT_WINDOW_KEY={CCBOT_WINDOW_KEY} -e CCBOT_MAP_FILE={CCBOT_MAP_FILE} -e CCBOT_THREAD_ID={CCBOT_THREAD_ID} -v ~/.ccbot:/root/.ccbot ... claude
+```
+
+Placeholders substituted by the bot at window creation:
+- `{CCBOT_WINDOW_KEY}` — tmux session:window_id:window_name (for hook)
+- `{CCBOT_MAP_FILE}` — path to session_map.json (for hook)
+- `{CCBOT_THREAD_ID}` — Telegram topic ID (for schedule/send-file)
+
+Inside Docker, Claude Code uses standalone scripts instead of `ccbot`:
+- `ccbot-send-file.sh <path> [--caption "text"]` — send file to topic
+- `ccbot-schedule.sh --in 10m --prompt "text"` — schedule a task
 
 ## Architecture Details
 
