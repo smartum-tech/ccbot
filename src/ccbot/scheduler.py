@@ -399,19 +399,48 @@ async def _auto_resume_and_send(
         )
         return
 
-    # Validate cwd; fall back to home dir for resume
+    # Validate cwd; try _last_session_info (has host_cwd) before falling back
     resume_cwd = task.cwd
+    resume_session_id = task.session_id
     if not resume_cwd or not Path(resume_cwd).is_dir():
-        logger.warning(
-            "Task %s cwd '%s' does not exist, falling back to home dir",
-            task.short_id,
-            resume_cwd,
-        )
-        resume_cwd = str(Path.home())
+        # Task cwd may be a container-internal path; check last_session_info
+        # which stores host_cwd captured at unbind time
+        lsi = session_manager.get_last_session_info(thread_id)
+        if lsi:
+            lsi_session_id, lsi_cwd, _lsi_wname = lsi
+            if lsi_cwd and Path(lsi_cwd).is_dir():
+                logger.info(
+                    "Task %s cwd '%s' invalid, using last_session_info cwd '%s'",
+                    task.short_id,
+                    resume_cwd,
+                    lsi_cwd,
+                )
+                resume_cwd = lsi_cwd
+                task.cwd = lsi_cwd  # update for future attempts
+                if lsi_session_id:
+                    resume_session_id = lsi_session_id
+                    task.session_id = lsi_session_id
+                scheduler.update_task(task)
+                scheduler.save_tasks()
+        if not resume_cwd or not Path(resume_cwd).is_dir():
+            logger.warning(
+                "Task %s cwd '%s' does not exist, falling back to home dir",
+                task.short_id,
+                resume_cwd,
+            )
+            resume_cwd = str(Path.home())
+
+    logger.info(
+        "Auto-resume task %s: cwd='%s', session_id='%s', thread_id=%d",
+        task.short_id,
+        resume_cwd,
+        resume_session_id,
+        thread_id,
+    )
 
     # Create window with resume
     success, message, created_wname, created_wid = await tmux_manager.create_window(
-        resume_cwd, resume_session_id=task.session_id, thread_id=task.thread_id
+        resume_cwd, resume_session_id=resume_session_id, thread_id=task.thread_id
     )
     if not success:
         task.resume_attempts += 1
@@ -453,8 +482,9 @@ async def _auto_resume_and_send(
     # Bind thread to new window
     session_manager.bind_thread(thread_id, created_wid, window_name=created_wname)
 
-    # Wait and check if Claude Code actually started
-    await asyncio.sleep(3.0)
+    # Wait and check if Claude Code actually started.
+    # 8s timeout accounts for Docker container startup overhead.
+    await asyncio.sleep(8.0)
     w = await tmux_manager.find_window_by_id(created_wid)
     if w and w.pane_current_command in SHELL_COMMANDS:
         # Claude Code exited immediately — likely auth failure
