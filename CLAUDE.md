@@ -17,6 +17,7 @@ ccbot schedule --at "14:00" --prompt "Deploy"       # One-shot at 14:00
 ccbot schedule --every 1h --prompt "Monitor"        # Repeating every hour
 ccbot schedule --list                               # List tasks
 ccbot schedule --cancel <id>                        # Cancel task
+ccbot send-file <path> [--caption "text"]           # Send file to Telegram topic
 ```
 
 ## Core Design Constraints

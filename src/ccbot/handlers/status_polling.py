@@ -213,11 +213,16 @@ async def update_status_message(
 
 async def status_poll_loop(application: Application) -> None:  # type: ignore[type-arg]
     """Background task to poll terminal status for all thread-bound windows."""
+    from ..outbox import process_outbox
+
     bot = application.bot
     logger.info("Status polling started (interval: %ss)", STATUS_POLL_INTERVAL)
     last_topic_check = 0.0
     while True:
         try:
+            # Process outbox file-send requests
+            await process_outbox(bot)
+
             # Periodic topic existence probe
             now = time.monotonic()
             if now - last_topic_check >= TOPIC_CHECK_INTERVAL:

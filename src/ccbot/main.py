@@ -18,6 +18,12 @@ def main() -> None:
         hook_main()
         return
 
+    if len(sys.argv) > 1 and sys.argv[1] == "send-file":
+        from .send_file import send_file_cli_main
+
+        send_file_cli_main()
+        return
+
     if len(sys.argv) > 1 and sys.argv[1] == "schedule":
         from .scheduler import schedule_cli_main
 

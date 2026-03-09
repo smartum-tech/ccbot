@@ -84,6 +84,7 @@ class Config:
         self.session_map_file = self.config_dir / "session_map.json"
         self.monitor_state_file = self.config_dir / "monitor_state.json"
         self.scheduled_tasks_file = self.config_dir / "scheduled_tasks.json"
+        self.outbox_dir = self.config_dir / "outbox"
 
         # Claude Code session monitoring configuration
         # Support custom projects path for Claude variants (e.g., cc-mirror, zai)
