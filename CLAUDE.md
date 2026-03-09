@@ -12,12 +12,61 @@ uv run ruff format src/ tests/        # Format — auto-fix, then verify with --
 uv run pyright src/ccbot/             # Type check — MUST be 0 errors before committing
 ./scripts/restart.sh                  # Restart the ccbot service after code changes
 ccbot hook --install                  # Auto-install Claude Code SessionStart hook
-ccbot schedule --in 2h --prompt "Check tests"      # One-shot in 2 hours
-ccbot schedule --at "14:00" --prompt "Deploy"       # One-shot at 14:00
-ccbot schedule --every 1h --prompt "Monitor"        # Repeating every hour
-ccbot schedule --list                               # List tasks
-ccbot schedule --cancel <id>                        # Cancel task
-ccbot send-file <path> [--caption "text"]           # Send file to Telegram topic
+ccbot hook --install-docker           # Install standalone scripts for Docker
+```
+
+## Agent Commands (for Claude Code sessions)
+
+These commands let a Claude Code agent interact with the Telegram topic it is bound to.
+On host (tmux): use `ccbot` directly. In Docker: use standalone scripts from `~/.ccbot/`.
+
+### Send file to Telegram
+
+Send any file (image, PDF, archive, etc.) to the user in the bound Telegram topic.
+The file appears as a Telegram document. Max size: 50 MB.
+
+```bash
+# Host
+ccbot send-file <path> [--caption "text"]
+
+# Docker
+~/.ccbot/ccbot-send-file.sh <path> [--caption "text"]
+```
+
+Examples:
+```bash
+ccbot send-file ./report.pdf --caption "Weekly report"
+ccbot send-file /tmp/chart.png
+```
+
+### Schedule a task
+
+Create a delayed or repeating task. The bot will send the prompt to this session
+at the scheduled time — even if Claude Code has exited (auto-resume).
+
+```bash
+# Host
+ccbot schedule --in <time> --prompt "text" [--description "label"]
+ccbot schedule --at "HH:MM" --prompt "text"
+ccbot schedule --every <interval> --prompt "text"
+ccbot schedule --list
+ccbot schedule --cancel <id>
+
+# Docker
+~/.ccbot/ccbot-schedule.sh --in <time> --prompt "text" [--description "label"]
+~/.ccbot/ccbot-schedule.sh --at "HH:MM" --prompt "text"
+~/.ccbot/ccbot-schedule.sh --every <interval> --prompt "text"
+```
+
+Time formats: `30m`, `1h`, `2d`, `daily`. Absolute: `"14:00"` (local timezone).
+
+Examples:
+```bash
+ccbot schedule --in 2h --prompt "Run tests and report results"
+ccbot schedule --every 1h --prompt "Check service health" --description "Health check"
+ccbot schedule --at "09:00" --prompt "Good morning! Summarize overnight changes"
+ccbot schedule --list
+ccbot schedule --cancel abc12345
 ```
 
 ## Core Design Constraints
