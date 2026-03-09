@@ -1,11 +1,13 @@
 """CLI entry point for `ccbot send-file` — send files to Telegram via outbox.
 
-Writes a JSON request to ~/.ccbot/outbox/<uuid>.json which the bot picks up
-and sends to the bound Telegram topic as a document.
+Copies the file into ~/.ccbot/outbox/ and writes a JSON manifest alongside it.
+The bot picks up the manifest, sends the file to Telegram, and deletes both.
+File is copied (not referenced by path) so it works across Docker boundaries.
 """
 
 import argparse
 import os
+import shutil
 import sys
 import uuid
 
@@ -48,7 +50,7 @@ def send_file_cli_main() -> None:
 
     _tmux_session, _window_id, _window_name, _session_window_key, thread_id = ctx
 
-    # Write outbox request
+    # Copy file into outbox and write manifest
     import time
 
     from .utils import atomic_write_json, ccbot_dir
@@ -56,15 +58,24 @@ def send_file_cli_main() -> None:
     outbox_dir = ccbot_dir() / "outbox"
     outbox_dir.mkdir(parents=True, exist_ok=True)
 
+    request_id = str(uuid.uuid4())
+    original_name = os.path.basename(file_path)
+    # Preserve extension for Telegram MIME detection
+    _, ext = os.path.splitext(original_name)
+    staged_name = f"{request_id}{ext}"
+    staged_path = outbox_dir / staged_name
+
+    shutil.copy2(file_path, staged_path)
+
     request = {
         "thread_id": thread_id,
-        "file_path": file_path,
+        "staged_file": staged_name,
+        "original_name": original_name,
         "caption": args.caption,
         "created_at": time.time(),
     }
 
-    request_file = outbox_dir / f"{uuid.uuid4()}.json"
-    atomic_write_json(request_file, request)
+    manifest_file = outbox_dir / f"{request_id}.json"
+    atomic_write_json(manifest_file, request)
 
-    filename = os.path.basename(file_path)
-    print(f"Queued: {filename} → Telegram topic")
+    print(f"Queued: {original_name} → Telegram topic")

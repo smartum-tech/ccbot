@@ -66,23 +66,42 @@ async def process_outbox(bot: Bot) -> None:
 
 
 async def _process_send_file(bot: Bot, raw: dict[str, Any], entry: str) -> None:
-    """Process a send-file outbox request."""
+    """Process a send-file outbox request.
+
+    Supports two formats:
+    - New (staged): file copied into outbox dir, referenced by staged_file key
+    - Legacy (path): file referenced by absolute file_path (same-host only)
+    """
     thread_id: int = raw.get("thread_id", 0)
-    file_path: str = raw.get("file_path", "")
     caption: str = raw.get("caption", "")
 
-    if not thread_id or not file_path:
+    # Resolve file location (staged in outbox dir, or legacy absolute path)
+    staged_file: str = raw.get("staged_file", "")
+    original_name: str = raw.get("original_name", "")
+    legacy_path: str = raw.get("file_path", "")
+
+    if staged_file:
+        file_path = str(config.outbox_dir / staged_file)
+        filename = original_name or staged_file
+    elif legacy_path:
+        file_path = legacy_path
+        filename = os.path.basename(legacy_path)
+    else:
+        logger.warning("Outbox: no file in send-file request %s", entry)
+        return
+
+    if not thread_id:
         logger.warning("Outbox: invalid send-file request %s", entry)
+        _safe_delete_if_staged(file_path, staged_file)
         return
 
     chat_id = session_manager.resolve_chat_id(thread_id)
 
     if not os.path.isfile(file_path):
-        logger.warning("Outbox: file no longer exists: %s", file_path)
+        logger.warning("Outbox: file not found: %s", file_path)
         return
 
     try:
-        filename = os.path.basename(file_path)
         with open(file_path, "rb") as f:
             await bot.send_document(
                 chat_id=chat_id,
@@ -93,7 +112,11 @@ async def _process_send_file(bot: Bot, raw: dict[str, Any], entry: str) -> None:
             )
         logger.info("Outbox: sent %s to thread %d", filename, thread_id)
     except Exception as e:
-        logger.error("Outbox: failed to send %s: %s", file_path, e)
+        logger.error("Outbox: failed to send %s: %s", filename, e)
+    finally:
+        # Clean up staged file (copied into outbox by CLI)
+        if staged_file:
+            _safe_delete(file_path)
 
 
 async def _process_schedule(bot: Bot, raw: dict[str, Any], entry: str) -> None:
@@ -256,3 +279,9 @@ def _safe_delete(path: os.PathLike[str] | str) -> None:
         os.unlink(path)
     except OSError:
         pass
+
+
+def _safe_delete_if_staged(file_path: str, staged_file: str) -> None:
+    """Delete a staged file if it exists in the outbox."""
+    if staged_file:
+        _safe_delete(file_path)

@@ -91,7 +91,8 @@ process.stdin.on("end", () => {
 _DOCKER_SEND_FILE_SCRIPT_NAME = "ccbot-send-file.sh"
 _DOCKER_SEND_FILE_SCRIPT_CONTENT = """\
 #!/bin/sh
-# CCBOT Docker send-file — queue a file for delivery to Telegram topic.
+# CCBOT Docker send-file — copy file to outbox for delivery to Telegram topic.
+# Copies the file into the shared outbox dir so the host bot can access it.
 # Env vars: CCBOT_THREAD_ID (topic id), CCBOT_MAP_FILE (path to derive outbox dir).
 # Usage: ccbot-send-file.sh <file-path> [--caption "text"]
 
@@ -145,19 +146,27 @@ mkdir -p "$OUTBOX_DIR"
 
 UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || node -e "process.stdout.write(require('crypto').randomUUID())")
 TIMESTAMP=$(node -e "process.stdout.write(String(Date.now()/1000))")
+ORIGINAL_NAME="$(basename "$FILE_PATH")"
+EXT="${ORIGINAL_NAME##*.}"
+[ "$EXT" = "$ORIGINAL_NAME" ] && EXT="" || EXT=".$EXT"
+STAGED_NAME="${UUID}${EXT}"
+
+# Copy file into outbox (shared volume — accessible by host bot)
+cp "$FILE_PATH" "$OUTBOX_DIR/$STAGED_NAME"
 
 node -e "
 const fs = require('fs');
 const data = {
   thread_id: parseInt(process.env.CCBOT_THREAD_ID),
-  file_path: process.argv[1],
-  caption: process.argv[2] || '',
-  created_at: parseFloat(process.argv[3])
+  staged_file: process.argv[1],
+  original_name: process.argv[2],
+  caption: process.argv[3] || '',
+  created_at: parseFloat(process.argv[4])
 };
-fs.writeFileSync(process.argv[4], JSON.stringify(data, null, 2) + '\\n');
-" "$FILE_PATH" "$CAPTION" "$TIMESTAMP" "$OUTBOX_DIR/$UUID.json"
+fs.writeFileSync(process.argv[5], JSON.stringify(data, null, 2) + '\\n');
+" "$STAGED_NAME" "$ORIGINAL_NAME" "$CAPTION" "$TIMESTAMP" "$OUTBOX_DIR/$UUID.json"
 
-echo "Queued: $(basename "$FILE_PATH") -> Telegram topic"
+echo "Queued: $ORIGINAL_NAME -> Telegram topic"
 """
 
 _DOCKER_SCHEDULE_SCRIPT_NAME = "ccbot-schedule.sh"
